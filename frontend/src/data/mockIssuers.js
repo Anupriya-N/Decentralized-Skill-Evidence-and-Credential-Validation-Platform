@@ -1,0 +1,62 @@
+export const INITIAL_ISSUERS = [
+  {
+    id: 'iss-001',
+    organizationName: 'Global Cloud & Tech Certification Authority',
+    organizationType: 'Certification Organization',
+    email: 'issuer@example.com',
+    website: 'https://globalcloudtech.org',
+    description: 'Accredited international body evaluating cloud architecture, DevOps, and infrastructure security credentials.',
+    proofDocumentName: 'Accreditation_Charter_2024.pdf',
+    trustStatus: 'trusted',
+    reviewedBy: 'user-admin-01',
+    reviewedAt: '2024-12-01T10:00:00Z',
+    reviewReason: 'Institutional accreditation verified against higher education council records.',
+    createdAt: '2024-11-10T09:15:00Z',
+    credentialsIssuedCount: 124
+  },
+  {
+    id: 'iss-002',
+    organizationName: 'Metropolitan Institute of Technology',
+    organizationType: 'University / Higher Ed',
+    email: 'credentials@mit-metro.edu',
+    website: 'https://mit-metro.edu',
+    description: 'Premier regional polytechnic university offering certified undergraduate and graduate programs.',
+    proofDocumentName: 'University_Registry_License.pdf',
+    trustStatus: 'trusted',
+    reviewedBy: 'user-admin-01',
+    reviewedAt: '2024-09-15T14:30:00Z',
+    reviewReason: 'Charter verified with national department of education.',
+    createdAt: '2024-09-01T08:00:00Z',
+    credentialsIssuedCount: 310
+  },
+  {
+    id: 'iss-003',
+    organizationName: 'DeepLearning Intelligence Labs',
+    organizationType: 'Training Provider',
+    email: 'certify@deeplearning-labs.ai',
+    website: 'https://deeplearning-labs.ai',
+    description: 'Specialized deep learning and generative AI training provider offering hands-on capstone verifications.',
+    proofDocumentName: 'Business_Registration_Certificate.pdf',
+    trustStatus: 'pending',
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewReason: 'Application submitted; awaiting primary entity and tax clearance review.',
+    createdAt: '2025-02-10T11:45:00Z',
+    credentialsIssuedCount: 15
+  },
+  {
+    id: 'iss-004',
+    organizationName: 'FastTrack Web Bootcamps Ltd',
+    organizationType: 'Online Academy',
+    email: 'info@fasttrackbootcamps.io',
+    website: 'https://fasttrackbootcamps.io',
+    description: 'Unaccredited crash course provider flagged for duplicate automated certificate generations.',
+    proofDocumentName: 'Unverified_Notice.pdf',
+    trustStatus: 'suspended',
+    reviewedBy: 'user-admin-01',
+    reviewedAt: '2025-01-20T16:00:00Z',
+    reviewReason: 'Suspended due to unverified corporate registration and irregular attestations.',
+    createdAt: '2024-10-05T12:00:00Z',
+    credentialsIssuedCount: 4
+  }
+];

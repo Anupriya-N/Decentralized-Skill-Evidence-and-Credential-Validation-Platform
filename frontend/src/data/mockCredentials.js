@@ -1,0 +1,253 @@
+export const INITIAL_CREDENTIALS = [
+  {
+    id: 'cred-001',
+    credentialId: 'CRED-2025-9481',
+    ownerUserId: 'user-student-01',
+    title: 'Certified Solutions Architect - Cloud Infrastructure',
+    skillName: 'Cloud Infrastructure & AWS',
+    category: 'Cloud Computing',
+    description: 'Demonstrates professional competence in designing highly available, fault-tolerant, scalable architectures on cloud infrastructure.',
+    issuerId: 'iss-001',
+    issuerName: 'Global Cloud & Tech Certification Authority',
+    issueDate: '2025-01-20',
+    expiryDate: '2028-01-20',
+    fileName: 'AWS_Solutions_Architect_Certificate.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 1428590, // ~1.36 MB
+    fileStorageKey: 'mock-storage/AWS_Solutions_Architect_Certificate.pdf',
+    fileHashAlgorithm: 'SHA-256',
+    fileHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    integrityStatus: 'verified', // 'verified' | 'mismatch' | 'unverified'
+    issuerStatus: 'trusted',     // 'trusted' | 'pending' | 'suspended' | 'untrusted'
+    credentialStatus: 'active',  // 'active' | 'expired' | 'revoked' | 'superseded'
+    visibility: 'public',        // 'public' | 'private'
+    version: 1,
+    createdAt: '2025-01-22T10:14:00Z',
+    updatedAt: '2025-01-22T10:14:00Z',
+    blockchainProof: {
+      network: 'Ethereum Sepolia (Simulated)',
+      chainId: 11155111,
+      contractAddress: '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: '0x4f8e6c43b9d0e2a1b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0',
+      blockNumber: 7492104,
+      registeredDigest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      registrationStatus: 'confirmed',
+      registeredAt: '2025-01-22T10:15:30Z',
+      isMock: true
+    }
+  },
+  {
+    id: 'cred-002',
+    credentialId: 'CRED-2025-3312',
+    ownerUserId: 'user-student-01',
+    title: 'Bachelor of Science in Computer Science - Honors Capstone',
+    skillName: 'Full-Stack Software Architecture',
+    category: 'Programming',
+    description: 'Undergraduate capstone degree project evaluating distributed microservice architectures and automated CI/CD deployment pipelines.',
+    issuerId: 'iss-002',
+    issuerName: 'Metropolitan Institute of Technology',
+    issueDate: '2024-12-15',
+    expiryDate: null,
+    fileName: 'MIT_Computer_Science_Degree_Honors.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 2841020,
+    fileStorageKey: 'mock-storage/MIT_Computer_Science_Degree_Honors.pdf',
+    fileHashAlgorithm: 'SHA-256',
+    fileHash: 'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
+    integrityStatus: 'verified',
+    issuerStatus: 'trusted',
+    credentialStatus: 'active',
+    visibility: 'public',
+    version: 1,
+    createdAt: '2024-12-18T14:20:00Z',
+    updatedAt: '2024-12-18T14:20:00Z',
+    blockchainProof: {
+      network: 'Ethereum Sepolia (Simulated)',
+      chainId: 11155111,
+      contractAddress: '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: '0x81b7e42d63f019a7c3b2e5d8a9f0e1c2b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8',
+      blockNumber: 7421890,
+      registeredDigest: 'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
+      registrationStatus: 'confirmed',
+      registeredAt: '2024-12-18T14:22:15Z',
+      isMock: true
+    }
+  },
+  {
+    id: 'cred-003',
+    credentialId: 'CRED-2025-7801',
+    ownerUserId: 'user-student-01',
+    title: 'Advanced Deep Learning and Neural Transformers',
+    skillName: 'Neural Networks & PyTorch',
+    category: 'AI / Machine Learning',
+    description: 'Comprehensive specialization covering Attention Mechanisms, Large Language Model fine-tuning, and multi-modal embeddings.',
+    issuerId: 'iss-003',
+    issuerName: 'DeepLearning Intelligence Labs',
+    issueDate: '2025-02-05',
+    expiryDate: '2027-02-05',
+    fileName: 'Deep_Learning_Specialization_Cert.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 981240,
+    fileStorageKey: 'mock-storage/Deep_Learning_Specialization_Cert.pdf',
+    fileHashAlgorithm: 'SHA-256',
+    fileHash: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+    integrityStatus: 'verified',
+    issuerStatus: 'pending', // Pending issuer approval
+    credentialStatus: 'active',
+    visibility: 'public',
+    version: 1,
+    createdAt: '2025-02-07T09:12:00Z',
+    updatedAt: '2025-02-07T09:12:00Z',
+    blockchainProof: {
+      network: 'Ethereum Sepolia (Simulated)',
+      chainId: 11155111,
+      contractAddress: '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: '0x99a8b7c6d5e4f3a2b1c0e9f8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8',
+      blockNumber: 7511200,
+      registeredDigest: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+      registrationStatus: 'confirmed',
+      registeredAt: '2025-02-07T09:15:00Z',
+      isMock: true
+    }
+  },
+  {
+    id: 'cred-004',
+    credentialId: 'CRED-2024-1109',
+    ownerUserId: 'user-student-01',
+    title: 'Python for Data Engineering & Pipelines',
+    skillName: 'Python, ETL & Pandas',
+    category: 'Data Science',
+    description: 'Foundational course in writing robust ETL workflows, streaming data ingestion, and Pandas dataframe transformations.',
+    issuerId: 'iss-002',
+    issuerName: 'Metropolitan Institute of Technology',
+    issueDate: '2023-01-10',
+    expiryDate: '2024-01-10', // Expired
+    fileName: 'Python_Data_Engineering_2023.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 840120,
+    fileStorageKey: 'mock-storage/Python_Data_Engineering_2023.pdf',
+    fileHashAlgorithm: 'SHA-256',
+    fileHash: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
+    integrityStatus: 'verified',
+    issuerStatus: 'trusted',
+    credentialStatus: 'expired', // Expired status
+    visibility: 'public',
+    version: 1,
+    createdAt: '2023-01-12T11:00:00Z',
+    updatedAt: '2024-01-11T00:00:00Z',
+    blockchainProof: {
+      network: 'Ethereum Sepolia (Simulated)',
+      chainId: 11155111,
+      contractAddress: '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      blockNumber: 6812003,
+      registeredDigest: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
+      registrationStatus: 'confirmed',
+      registeredAt: '2023-01-12T11:05:00Z',
+      isMock: true
+    }
+  },
+  {
+    id: 'cred-005',
+    credentialId: 'CRED-2024-6590',
+    ownerUserId: 'user-student-01',
+    title: 'Smart Contract Security & Auditing Foundations',
+    skillName: 'Solidity & Security Auditing',
+    category: 'Blockchain',
+    description: 'Analysis of reentrancy vulnerabilities, arithmetic overflows, frontrunning, and formal verification methodologies.',
+    issuerId: 'iss-004',
+    issuerName: 'FastTrack Web Bootcamps Ltd',
+    issueDate: '2024-06-10',
+    expiryDate: null,
+    fileName: 'Smart_Contract_Security_Cert.pdf',
+    mimeType: 'application/pdf',
+    fileSize: 1102940,
+    fileStorageKey: 'mock-storage/Smart_Contract_Security_Cert.pdf',
+    fileHashAlgorithm: 'SHA-256',
+    fileHash: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+    integrityStatus: 'verified',
+    issuerStatus: 'suspended',
+    credentialStatus: 'revoked', // Revoked status
+    revocationReason: 'Credential revoked by platform administrator: Issuing authority suspended for audit irregularities.',
+    revokedAt: '2025-01-21T14:30:00Z',
+    revokedBy: 'user-admin-01',
+    visibility: 'public',
+    version: 1,
+    createdAt: '2024-06-12T16:00:00Z',
+    updatedAt: '2025-01-21T14:30:00Z',
+    blockchainProof: {
+      network: 'Ethereum Sepolia (Simulated)',
+      chainId: 11155111,
+      contractAddress: '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: '0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba',
+      blockNumber: 7100420,
+      registeredDigest: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+      registrationStatus: 'confirmed',
+      registeredAt: '2024-06-12T16:04:00Z',
+      isMock: true
+    }
+  }
+];
+
+export const INITIAL_SKILLS = [
+  {
+    id: 'skill-01',
+    ownerUserId: 'user-student-01',
+    name: 'Cloud Infrastructure & AWS',
+    category: 'Cloud Computing',
+    proficiency: 'Advanced',
+    isSelfReported: false,
+    evidenceCredentialIds: ['cred-001'],
+    visibility: 'public'
+  },
+  {
+    id: 'skill-02',
+    ownerUserId: 'user-student-01',
+    name: 'Full-Stack Software Architecture',
+    category: 'Programming',
+    proficiency: 'Advanced',
+    isSelfReported: false,
+    evidenceCredentialIds: ['cred-002'],
+    visibility: 'public'
+  },
+  {
+    id: 'skill-03',
+    ownerUserId: 'user-student-01',
+    name: 'Neural Networks & PyTorch',
+    category: 'AI / Machine Learning',
+    proficiency: 'Intermediate',
+    isSelfReported: false,
+    evidenceCredentialIds: ['cred-003'],
+    visibility: 'public'
+  },
+  {
+    id: 'skill-04',
+    ownerUserId: 'user-student-01',
+    name: 'Python, ETL & Pandas',
+    category: 'Data Science',
+    proficiency: 'Intermediate',
+    isSelfReported: false,
+    evidenceCredentialIds: ['cred-004'],
+    visibility: 'public'
+  },
+  {
+    id: 'skill-05',
+    ownerUserId: 'user-student-01',
+    name: 'React.js & Modern Web UI',
+    category: 'Web Development',
+    proficiency: 'Expert',
+    isSelfReported: true, // self-reported with no direct on-chain cert yet
+    evidenceCredentialIds: [],
+    visibility: 'public'
+  },
+  {
+    id: 'skill-06',
+    ownerUserId: 'user-student-01',
+    name: 'Docker & Kubernetes',
+    category: 'DevOps',
+    proficiency: 'Intermediate',
+    isSelfReported: true,
+    evidenceCredentialIds: [],
+    visibility: 'public'
+  }
+];
