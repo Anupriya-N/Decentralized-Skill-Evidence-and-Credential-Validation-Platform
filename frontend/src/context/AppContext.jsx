@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { storageService } from '../services/storageService';
 import { credentialService } from '../services/credentialService';
+import { issuerService } from '../services/issuerService';
 import toast from 'react-hot-toast';
 
 const AppContext = createContext(null);
@@ -12,6 +13,7 @@ export const AppProvider = ({ children }) => {
   const [notifications, setNotifications] = useState(() => storageService.getNotifications());
   const [auditLogs, setAuditLogs] = useState(() => storageService.getAuditLogs());
   const [verificationLogs, setVerificationLogs] = useState(() => storageService.getVerificationLogs());
+  const [validationRequests, setValidationRequests] = useState(() => storageService.getValidationRequests());
   const [users, setUsers] = useState(() => storageService.getUsers());
 
   const refreshData = useCallback(() => {
@@ -21,6 +23,7 @@ export const AppProvider = ({ children }) => {
     setNotifications([...storageService.getNotifications()]);
     setAuditLogs([...storageService.getAuditLogs()]);
     setVerificationLogs([...storageService.getVerificationLogs()]);
+    setValidationRequests([...storageService.getValidationRequests()]);
     setUsers([...storageService.getUsers()]);
   }, []);
 
@@ -33,11 +36,51 @@ export const AppProvider = ({ children }) => {
   const addCredential = async (credentialData, fileObject, computedSha256) => {
     try {
       const newCred = await credentialService.createCredential(credentialData, fileObject, computedSha256);
+      
+      // If credential requires issuer verification (e.g. pending issuer or custom issuer), enqueue validation claim
+      if (newCred.issuerStatus === 'pending') {
+        issuerService.submitOrResubmitClaim({
+          credentialId: newCred.credentialId,
+          credentialDbId: newCred.id,
+          studentId: newCred.ownerUserId,
+          studentName: 'Alex Chen',
+          credentialTitle: newCred.title,
+          issuerId: newCred.issuerId,
+          issuerName: newCred.issuerName,
+          evidenceFileName: newCred.fileName,
+          fileHash: newCred.fileHash
+        });
+      }
+
       refreshData();
       toast.success(`Credential "${newCred.title}" registered with SHA-256 digest!`);
       return newCred;
     } catch (err) {
       toast.error(err.message || 'Failed to register credential.');
+      throw err;
+    }
+  };
+
+  const approveValidationRequestAction = async (requestId) => {
+    try {
+      const result = issuerService.approveValidationRequest(requestId);
+      refreshData();
+      toast.success('Student claim verified and approved! Credential marked as trusted.');
+      return result;
+    } catch (err) {
+      toast.error('Approval failed: ' + err.message);
+      throw err;
+    }
+  };
+
+  const rejectValidationRequestAction = async (requestId, reason) => {
+    try {
+      const result = issuerService.rejectValidationRequest(requestId, reason);
+      refreshData();
+      toast.error(`Student claim rejected: "${reason}"`);
+      return result;
+    } catch (err) {
+      toast.error('Rejection failed: ' + err.message);
       throw err;
     }
   };
@@ -110,10 +153,13 @@ export const AppProvider = ({ children }) => {
       notifications,
       auditLogs,
       verificationLogs,
+      validationRequests,
       users,
       refreshData,
       resetAllDemoData,
       addCredential,
+      approveValidationRequestAction,
+      rejectValidationRequestAction,
       updateIssuerTrustStatus,
       revokeCredentialAction,
       markNotificationRead

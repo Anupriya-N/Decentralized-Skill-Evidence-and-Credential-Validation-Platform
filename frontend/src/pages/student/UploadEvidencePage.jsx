@@ -198,6 +198,7 @@ export const UploadEvidencePage = () => {
     try {
       const newCred = await addCredential({
         ownerUserId: user?.id,
+        resubmitCredentialId: resubmitId,
         title,
         skillName,
         category,

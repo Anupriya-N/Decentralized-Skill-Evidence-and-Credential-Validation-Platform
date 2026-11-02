@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { credentialService } from '../../services/credentialService';
+import { blockchainService } from '../../services/blockchainService';
 import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
@@ -278,40 +279,59 @@ export const CredentialDetailsPage = () => {
         {/* Right Column: Ledger Record & Dedicated Proof Link */}
         <div className="space-y-6">
           <Card className="bg-gradient-to-b from-slate-900 to-navy-950 text-white space-y-4 border-navy-800">
-            <div className="flex items-center justify-between border-b border-navy-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Boxes className="w-5 h-5 text-brand-400" />
-                <h3 className="text-sm font-bold">Ledger Proof Anchor</h3>
-              </div>
-              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
-                SIMULATION
-              </span>
-            </div>
+            {(() => {
+              const isLiveConnected = blockchainService.isConnected();
+              const hasLiveProof = Boolean(isLiveConnected && credential.blockchainProof?.transactionHash && !credential.blockchainProof?.isMock);
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Immutable reference registered on the CredentialRegistry smart contract. No personally identifiable information (PII) is stored on-chain.
-            </p>
+              return (
+                <>
+                  <div className="flex items-center justify-between border-b border-navy-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Boxes className="w-5 h-5 text-brand-400" />
+                      <h3 className="text-sm font-bold">Ledger Proof Anchor</h3>
+                    </div>
+                    <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded font-bold border ${
+                      hasLiveProof 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                    }`}>
+                      {hasLiveProof ? 'ON-CHAIN' : 'BLOCKCHAIN NOT CONNECTED'}
+                    </span>
+                  </div>
 
-            <div className="space-y-3 text-xs font-mono">
-              <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Network</span>
-                <span className="text-brand-300 font-semibold">{credential.blockchainProof?.network || 'Sepolia (Simulated)'}</span>
-              </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {hasLiveProof
+                      ? 'Immutable reference confirmed on live CredentialRegistry smart contract. No personally identifiable information (PII) is stored on-chain.'
+                      : 'Cryptographic digest is preserved off-chain. Live smart contract anchoring requires a configured Web3 network connection.'}
+                  </p>
 
-              <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Transaction Hash</span>
-                <span className="text-slate-200 text-[11px] break-all">{credential.blockchainProof?.transactionHash}</span>
-              </div>
-            </div>
+                  <div className="space-y-3 text-xs font-mono">
+                    <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
+                      <span className="text-[10px] text-slate-400 uppercase block">Network</span>
+                      <span className="text-brand-300 font-semibold">
+                        {hasLiveProof ? credential.blockchainProof?.network : 'Blockchain integration not connected'}
+                      </span>
+                    </div>
 
-            {/* Link to Dedicated Blockchain Proof Page (Section 4 requirement) */}
-            <div className="pt-2">
-              <Link to={`/blockchain-proof/${credential.credentialId}`} className="block">
-                <Button variant="primary" size="sm" className="w-full" icon={ExternalLink}>
-                  View Full Blockchain Proof Page
-                </Button>
-              </Link>
-            </div>
+                    <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
+                      <span className="text-[10px] text-slate-400 uppercase block">Transaction Hash</span>
+                      <span className={`text-[11px] break-all ${hasLiveProof ? 'text-slate-200' : 'text-slate-400 italic font-sans'}`}>
+                        {hasLiveProof ? credential.blockchainProof?.transactionHash : 'No live transaction recorded'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Link to Dedicated Blockchain Proof Page */}
+                  <div className="pt-2">
+                    <Link to={`/blockchain-proof/${credential.credentialId}`} className="block">
+                      <Button variant="primary" size="sm" className="w-full" icon={ExternalLink}>
+                        View Blockchain Proof Details
+                      </Button>
+                    </Link>
+                  </div>
+                </>
+              );
+            })()}
           </Card>
         </div>
       </div>

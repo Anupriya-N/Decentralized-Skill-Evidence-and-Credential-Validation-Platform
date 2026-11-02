@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatDate } from '../../utils/formatUtils';
+import { blockchainService } from '../../services/blockchainService';
 import { 
   CheckCircle2, 
   Clock, 
@@ -19,6 +20,11 @@ export const CredentialTimeline = ({ credential, onResubmitEvidence }) => {
   const isRejected = credential.claimStatus === 'rejected' || credential.issuerStatus === 'suspended';
   const isTrustedIssuer = credential.issuerStatus === 'trusted';
   const isPendingIssuer = credential.issuerStatus === 'pending';
+  const hasLiveBlockchainProof = Boolean(
+    blockchainService.isConnected() && 
+    credential.blockchainProof?.transactionHash && 
+    !credential.blockchainProof?.isMock
+  );
 
   const steps = [
     {
@@ -55,12 +61,12 @@ export const CredentialTimeline = ({ credential, onResubmitEvidence }) => {
     },
     {
       id: 'blockchain',
-      title: credential.blockchainProof?.network ? 'Proof Anchored on Smart Contract' : 'Blockchain Ledger State',
-      description: credential.blockchainProof?.network
-        ? `Registered on ${credential.blockchainProof.network} (Block #${credential.blockchainProof.blockNumber || 'Pending'})`
-        : 'Blockchain integration not connected to live network (Simulated ledger active).',
+      title: hasLiveBlockchainProof ? 'Proof Anchored on Smart Contract' : 'Blockchain Integration Status',
+      description: hasLiveBlockchainProof
+        ? `Confirmed on ${credential.blockchainProof.network} (Block #${credential.blockchainProof.blockNumber || 'Confirmed'})`
+        : 'Blockchain integration not connected to live network. Cryptographic SHA-256 digest preserved on platform registry.',
       date: credential.blockchainProof?.registeredAt || credential.createdAt,
-      status: credential.blockchainProof?.network ? 'completed' : 'pending',
+      status: hasLiveBlockchainProof ? 'completed' : 'pending',
       icon: Boxes
     },
     {

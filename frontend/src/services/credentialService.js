@@ -20,6 +20,38 @@ export const credentialService = {
     const creds = storageService.getCredentials();
     const issuers = storageService.getIssuers();
 
+    // Check if this is a resubmission for an existing credential
+    if (credentialData.resubmitCredentialId) {
+      const existingIdx = creds.findIndex(c => 
+        c.id === credentialData.resubmitCredentialId || 
+        c.credentialId === credentialData.resubmitCredentialId
+      );
+      if (existingIdx !== -1) {
+        const existing = creds[existingIdx];
+        const updated = {
+          ...existing,
+          title: credentialData.title || existing.title,
+          skillName: credentialData.skillName || existing.skillName,
+          category: credentialData.category || existing.category,
+          description: credentialData.description !== undefined ? credentialData.description : existing.description,
+          issueDate: credentialData.issueDate || existing.issueDate,
+          expiryDate: credentialData.expiryDate || existing.expiryDate,
+          fileName: fileObject?.name || existing.fileName,
+          fileSize: fileObject?.size || existing.fileSize,
+          mimeType: fileObject?.type || existing.mimeType,
+          fileHash: computedSha256,
+          claimStatus: 'pending',
+          issuerStatus: 'pending',
+          rejectionReason: null,
+          version: (existing.version || 1) + 1,
+          updatedAt: new Date().toISOString()
+        };
+        creds[existingIdx] = updated;
+        storageService.setCredentials(creds);
+        return updated;
+      }
+    }
+
     // Check issuer trust status
     const matchedIssuer = issuers.find(i => 
       i.id === credentialData.issuerId || 

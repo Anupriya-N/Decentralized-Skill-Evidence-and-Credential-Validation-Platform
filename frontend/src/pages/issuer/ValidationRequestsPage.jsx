@@ -6,47 +6,47 @@ import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
 import { Modal } from '../../components/common/Modal';
 import { DocumentPreview } from '../../components/common/DocumentPreview';
+import { formatDate } from '../../utils/formatUtils';
 import { FileCheck2, Check, X, Clock, ExternalLink, Eye, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export const ValidationRequestsPage = () => {
   const { user } = useAuth();
-  const { credentials, refreshData } = useApp();
-
-  const [requests, setRequests] = useState([
-    {
-      id: 'req-001',
-      studentName: 'Alex Chen',
-      credentialTitle: 'Advanced Deep Learning and Neural Transformers',
-      submittedDate: '2025-02-08',
-      status: 'pending',
-      evidenceFileName: 'Deep_Learning_Specialization_Cert.pdf',
-      credentialId: 'CRED-2025-7801',
-      fileHash: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
-      rejectionReason: null
-    }
-  ]);
+  const { 
+    validationRequests = [], 
+    approveValidationRequestAction, 
+    rejectValidationRequestAction 
+  } = useApp();
 
   const [previewReq, setPreviewReq] = useState(null);
   const [rejectingReq, setRejectingReq] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('Enrollment record not found in institutional registrar.');
+  const [processingId, setProcessingId] = useState(null);
 
-  const handleApprove = (reqId) => {
-    setRequests(requests.map(r => r.id === reqId ? { ...r, status: 'approved' } : r));
-    toast.success('Student claim approved! Credential attested as trusted.');
+  const handleApprove = async (reqId) => {
+    setProcessingId(reqId);
+    try {
+      await approveValidationRequestAction(reqId);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
-  const handleConfirmReject = (e) => {
+  const handleConfirmReject = async (e) => {
     e.preventDefault();
     if (!rejectingReq) return;
 
-    setRequests(requests.map(r => 
-      r.id === rejectingReq.id 
-        ? { ...r, status: 'rejected', rejectionReason } 
-        : r
-    ));
-    setRejectingReq(null);
-    toast.error(`Student claim rejected: "${rejectionReason}"`);
+    setProcessingId(rejectingReq.id);
+    try {
+      await rejectValidationRequestAction(rejectingReq.id, rejectionReason);
+      setRejectingReq(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   return (
@@ -54,68 +54,90 @@ export const ValidationRequestsPage = () => {
       <div>
         <h1 className="text-xl font-bold text-slate-900">Student Claim Validation Queue</h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Inspect student certificates, preview evidence documents, and approve or reject claims with auditable reasons.
+          Inspect student certificates, preview evidence documents, and approve or reject claims with auditable reasons and persistent records.
         </p>
       </div>
 
       <div className="space-y-4">
-        {requests.map(req => (
-          <Card key={req.id} className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm text-slate-900">{req.credentialTitle}</span>
-                <Badge status={req.status} size="sm" />
-              </div>
-              <p className="text-xs text-slate-600">
-                Claimant: <strong className="text-slate-800">{req.studentName}</strong> • Submitted: {req.submittedDate}
-              </p>
-              <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2">
-                <span>File: {req.evidenceFileName}</span>
-                <span>•</span>
-                <span>ID: {req.credentialId}</span>
-              </div>
-              {req.rejectionReason && (
-                <p className="text-[11px] text-rose-600 font-sans mt-1">
-                  <strong>Rejection Note:</strong> {req.rejectionReason}
-                </p>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={Eye}
-                onClick={() => setPreviewReq(req)}
-              >
-                Preview Document
-              </Button>
-
-              {req.status === 'pending' ? (
-                <>
-                  <Button variant="primary" size="sm" icon={Check} onClick={() => handleApprove(req.id)}>
-                    Approve Claim
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    icon={X}
-                    onClick={() => {
-                      setRejectingReq(req);
-                      setRejectionReason('Enrollment record not found in institutional registrar.');
-                    }}
-                  >
-                    Reject
-                  </Button>
-                </>
-              ) : (
-                <span className="text-xs font-semibold uppercase text-slate-500">
-                  Claim {req.status}
-                </span>
-              )}
-            </div>
+        {validationRequests.length === 0 ? (
+          <Card className="p-8 text-center text-slate-500 text-xs">
+            No validation requests in the queue.
           </Card>
-        ))}
+        ) : (
+          validationRequests.map(req => (
+            <Card key={req.id} className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-slate-900">{req.credentialTitle}</span>
+                  <Badge status={req.status} size="sm" />
+                </div>
+                <p className="text-xs text-slate-600">
+                  Claimant: <strong className="text-slate-800">{req.studentName}</strong> • Submitted: {req.submittedDate}
+                </p>
+                <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2">
+                  <span>File: {req.evidenceFileName}</span>
+                  <span>•</span>
+                  <span>ID: {req.credentialId}</span>
+                </div>
+                {req.reviewedAt && (
+                  <p className="text-[11px] text-slate-500 font-sans mt-0.5">
+                    Evaluated: {formatDate(req.reviewedAt)}
+                  </p>
+                )}
+                {req.rejectionReason && (
+                  <p className="text-[11px] text-rose-600 font-sans mt-1">
+                    <strong>Rejection Reason:</strong> {req.rejectionReason}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Eye}
+                  onClick={() => setPreviewReq(req)}
+                >
+                  Preview Document
+                </Button>
+
+                {req.status === 'pending' ? (
+                  <>
+                    <Button 
+                      variant="primary" 
+                      size="sm" 
+                      icon={Check} 
+                      isLoading={processingId === req.id}
+                      onClick={() => handleApprove(req.id)}
+                    >
+                      Approve Claim
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={X}
+                      disabled={processingId === req.id}
+                      onClick={() => {
+                        setRejectingReq(req);
+                        setRejectionReason('Enrollment record not found in institutional registrar.');
+                      }}
+                    >
+                      Reject
+                    </Button>
+                  </>
+                ) : (
+                  <span className={`text-xs font-semibold uppercase px-2.5 py-1 rounded-full ${
+                    req.status === 'approved' 
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}>
+                    Claim {req.status}
+                  </span>
+                )}
+              </div>
+            </Card>
+          ))
+        )}
       </div>
 
       {/* Document Preview Modal */}
@@ -129,7 +151,7 @@ export const ValidationRequestsPage = () => {
         />
       )}
 
-      {/* Rejection Reason Form Modal (Missing.md item 3.7) */}
+      {/* Rejection Reason Form Modal */}
       {rejectingReq && (
         <Modal
           isOpen={!!rejectingReq}
@@ -175,7 +197,7 @@ export const ValidationRequestsPage = () => {
               <Button variant="secondary" size="sm" type="button" onClick={() => setRejectingReq(null)}>
                 Cancel
               </Button>
-              <Button variant="danger" size="sm" type="submit">
+              <Button variant="danger" size="sm" type="submit" isLoading={processingId === rejectingReq.id}>
                 Confirm Claim Rejection
               </Button>
             </div>

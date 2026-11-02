@@ -30,7 +30,7 @@ export const VerificationResultCard = ({ result }) => {
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold text-rose-900">Credential Not Found</h3>
+              <h3 className="text-lg font-bold text-rose-900">Credential Record Not Found</h3>
               <Badge status="Credential Not Found" size="sm" />
             </div>
             <p className="text-xs text-rose-700 leading-relaxed">
@@ -42,43 +42,46 @@ export const VerificationResultCard = ({ result }) => {
     );
   }
 
-  // Map to the 8 standard result states defined in Section 7 of Missing.md
-  // 1. Verified
-  // 2. Pending issuer verification
-  // 3. Hash mismatch
-  // 4. Revoked
-  // 5. Expired
-  // 6. Issuer not trusted
-  // 7. Blockchain unavailable
-  // 8. Credential not found
+  const fileHashStatus = checks.fileHash?.status || checks.integrity?.status || 'NOT_CHECKED';
+  const isHashMismatch = fileHashStatus === 'MISMATCH';
+  const isHashNotChecked = fileHashStatus === 'NOT_CHECKED';
+  const isHashMatch = fileHashStatus === 'MATCH';
 
-  const isHashMismatch = checks.integrity?.status === 'MISMATCH';
-  const isRevoked = checks.lifecycle?.status === 'REVOKED';
-  const isExpired = checks.lifecycle?.status === 'EXPIRED';
-  const isPendingIssuer = checks.issuer?.status === 'PENDING';
-  const isIssuerNotTrusted = checks.issuer?.status === 'SUSPENDED' || checks.issuer?.status === 'UNTRUSTED';
-  const isBlockchainUnavailable = checks.record?.networkUnavailable === true;
-  const isVerified = !isHashMismatch && !isRevoked && !isExpired && !isPendingIssuer && !isIssuerNotTrusted && !isBlockchainUnavailable && (checks.integrity?.status === 'MATCH' || checks.integrity?.status === 'NOT_CHECKED');
+  const issuerStatus = checks.issuer?.status || 'PENDING';
+  const isIssuerPending = issuerStatus === 'PENDING';
+  const isIssuerSuspended = issuerStatus === 'SUSPENDED' || issuerStatus === 'UNTRUSTED';
+  const isIssuerTrusted = issuerStatus === 'TRUSTED';
+
+  const lifecycleStatus = checks.lifecycle?.status || 'ACTIVE';
+  const isRevoked = lifecycleStatus === 'REVOKED';
+  const isExpired = lifecycleStatus === 'EXPIRED';
+  const isActive = lifecycleStatus === 'ACTIVE';
+
+  const blockchainStatus = checks.blockchain?.status || 'NOT_CONNECTED';
+  const isBlockchainUnavailable = blockchainStatus === 'UNAVAILABLE';
+
+  // Rule: Only show fully verified when all required checks succeed
+  const isFullyVerified = isHashMatch && isIssuerTrusted && isActive && !isBlockchainUnavailable;
 
   let normalizedResultState = 'Verified';
   let bannerColor = 'bg-emerald-50 border-emerald-200 text-emerald-950';
   let bannerIcon = <CheckCircle2 className="w-8 h-8 text-emerald-600" />;
   let bannerHeadline = 'Verification Successful — Authentic & Valid';
-  let bannerMessage = 'The registered proof matches the original document hash, the issuing organization is accredited, and the credential record is active.';
+  let bannerMessage = 'All required checks passed: SHA-256 file hash matched, issuing institution is verified & accredited, and the credential lifecycle is active.';
 
   if (isRevoked) {
     normalizedResultState = 'Revoked';
     bannerColor = 'bg-rose-50 border-rose-200 text-rose-950';
     bannerIcon = <XCircle className="w-8 h-8 text-rose-600" />;
     bannerHeadline = 'Revoked Credential — Not Valid';
-    bannerMessage = `This credential was officially revoked on ${formatDate(checks.lifecycle.revokedAt)}. Reason: "${checks.lifecycle.revocationReason || 'Revoked by authority'}".`;
+    bannerMessage = `This credential was officially revoked on ${formatDate(checks.lifecycle?.revokedAt)}. Reason: "${checks.lifecycle?.revocationReason || 'Revoked by authority'}".`;
   } else if (isHashMismatch) {
     normalizedResultState = 'Hash Mismatch';
     bannerColor = 'bg-rose-50 border-rose-200 text-rose-950';
     bannerIcon = <XCircle className="w-8 h-8 text-rose-600" />;
     bannerHeadline = 'Tampered / Mismatched Document File';
-    bannerMessage = 'The file provided produces a different cryptographic SHA-256 hash than what was originally registered on the ledger.';
-  } else if (isIssuerNotTrusted) {
+    bannerMessage = 'The file provided produces a different cryptographic SHA-256 hash than what was originally registered on the registry. The document has been modified or replaced.';
+  } else if (isIssuerSuspended) {
     normalizedResultState = 'Issuer Not Trusted';
     bannerColor = 'bg-rose-50 border-rose-200 text-rose-950';
     bannerIcon = <XCircle className="w-8 h-8 text-rose-600" />;
@@ -89,83 +92,100 @@ export const VerificationResultCard = ({ result }) => {
     bannerColor = 'bg-slate-100 border-slate-300 text-slate-800';
     bannerIcon = <Clock className="w-8 h-8 text-slate-500" />;
     bannerHeadline = 'Expired Credential';
-    bannerMessage = `This credential has passed its validity expiration date (${formatDate(checks.lifecycle.expiryDate)}).`;
+    bannerMessage = `This credential has passed its validity expiration date (${formatDate(checks.lifecycle?.expiryDate)}).`;
   } else if (isPendingIssuer) {
     normalizedResultState = 'Pending Issuer Verification';
     bannerColor = 'bg-amber-50 border-amber-200 text-amber-950';
     bannerIcon = <AlertTriangle className="w-8 h-8 text-amber-600" />;
     bannerHeadline = 'Pending Issuer Verification';
-    bannerMessage = 'The cryptographic hash is confirmed, but the issuing authority accreditation is currently awaiting administrative approval.';
+    bannerMessage = 'The cryptographic record exists, but the issuing authority accreditation or claim validation is currently awaiting review.';
+  } else if (isHashNotChecked) {
+    // Crucial fix: Do not return or display VALID when file hash has not been evaluated
+    normalizedResultState = 'Incomplete — File Not Checked';
+    bannerColor = 'bg-amber-50 border-amber-200 text-amber-950';
+    bannerIcon = <AlertTriangle className="w-8 h-8 text-amber-600" />;
+    bannerHeadline = 'Registry Record Located — File Verification Pending';
+    bannerMessage = 'A matching credential record was located in the registry. However, complete verification requires testing the physical document file. Upload the certificate file below for SHA-256 byte comparison.';
   } else if (isBlockchainUnavailable) {
     normalizedResultState = 'Blockchain Unavailable';
     bannerColor = 'bg-amber-50 border-amber-200 text-amber-950';
     bannerIcon = <AlertTriangle className="w-8 h-8 text-amber-600" />;
-    bannerHeadline = 'Blockchain Unavailable';
+    bannerHeadline = 'Blockchain Verification Unavailable';
     bannerMessage = 'Distributed ledger network node connection is currently offline or unreachable.';
   }
 
-  // Explicit 7 Verification Checks defined in Section 7 of Missing.md
+  // Explicit verification states corresponding to Section 2 of the prompt:
+  // 1. Record found
+  // 2. File hash matched / not checked / mismatch
+  // 3. Issuer trusted / pending / suspended
+  // 4. Credential active / expired / revoked
+  // 5. Blockchain verified / unavailable / not connected
   const verificationChecks = [
     {
-      id: 'hash_match',
-      label: 'Document hash matches',
-      passed: checks.integrity?.status === 'MATCH',
-      pending: checks.integrity?.status === 'NOT_CHECKED',
-      details: checks.integrity?.status === 'MATCH'
-        ? 'SHA-256 binary digest identical to registered proof.'
-        : checks.integrity?.status === 'NOT_CHECKED'
-        ? 'Original file not submitted for re-hash comparison.'
-        : 'CRITICAL: File digest does not match registered proof.'
-    },
-    {
-      id: 'blockchain_exists',
-      label: 'Credential exists on blockchain',
+      id: 'record_found',
+      label: 'Record found on registry',
+      status: checks.record?.status || 'FOUND',
       passed: checks.record?.status === 'FOUND',
       pending: false,
-      details: checks.record?.message || 'Proof record registered on distributed ledger.'
+      failed: checks.record?.status !== 'FOUND',
+      statusLabel: checks.record?.status || 'FOUND',
+      details: checks.record?.message || 'Proof record registered on credential registry.'
     },
     {
-      id: 'issuer_authorized',
-      label: 'Issuer is authorized',
-      passed: checks.issuer?.status === 'TRUSTED',
-      pending: checks.issuer?.status === 'PENDING',
-      details: checks.issuer?.status === 'TRUSTED'
-        ? 'Accredited issuing authority verified against higher education charter.'
-        : checks.issuer?.status === 'PENDING'
-        ? 'Issuer accreditation review currently in progress.'
-        : 'Issuer authority suspended or unauthorized.'
+      id: 'file_hash',
+      label: 'File hash integrity check',
+      status: fileHashStatus,
+      passed: isHashMatch,
+      pending: isHashNotChecked,
+      failed: isHashMismatch,
+      statusLabel: isHashMatch ? 'MATCH' : isHashNotChecked ? 'NOT CHECKED' : 'MISMATCH',
+      details: isHashMatch
+        ? 'SHA-256 binary digest identical to registered proof.'
+        : isHashNotChecked
+        ? 'Original document not submitted for byte-by-byte hash comparison (Incomplete).'
+        : 'CRITICAL: Uploaded file digest does NOT match registered proof.'
     },
     {
-      id: 'issuer_verified',
-      label: 'Issuer verification completed',
-      passed: checks.issuer?.status === 'TRUSTED' && credential.issuerStatus === 'trusted',
-      pending: checks.issuer?.status === 'PENDING',
-      details: checks.issuer?.status === 'TRUSTED'
-        ? 'Institutional attestation confirmed.'
-        : 'Institutional attestation pending.'
+      id: 'issuer_status',
+      label: 'Issuer authority accreditation',
+      status: issuerStatus,
+      passed: isIssuerTrusted,
+      pending: isIssuerPending,
+      failed: isIssuerSuspended,
+      statusLabel: issuerStatus,
+      details: isIssuerTrusted
+        ? `Accredited issuer (${checks.issuer?.issuerName}) verified.`
+        : isIssuerPending
+        ? 'Issuer accreditation or claim validation pending review.'
+        : 'Issuing authority suspended or untrusted.'
     },
     {
-      id: 'credential_active',
-      label: 'Credential is active',
-      passed: checks.lifecycle?.status === 'ACTIVE',
+      id: 'credential_lifecycle',
+      label: 'Credential lifecycle status',
+      status: lifecycleStatus,
+      passed: isActive,
       pending: false,
-      details: checks.lifecycle?.status === 'ACTIVE'
-        ? 'Credential record is currently active.'
-        : `Record lifecycle state: ${checks.lifecycle?.status}.`
+      failed: isRevoked || isExpired,
+      statusLabel: lifecycleStatus,
+      details: isActive
+        ? 'Credential is valid and active.'
+        : isRevoked
+        ? `Credential revoked: "${checks.lifecycle?.revocationReason || 'No reason specified'}"`
+        : `Credential expired on ${formatDate(checks.lifecycle?.expiryDate)}.`
     },
     {
-      id: 'credential_not_expired',
-      label: 'Credential is not expired',
-      passed: !isExpired,
-      pending: false,
-      details: isExpired ? `Expired on ${formatDate(checks.lifecycle.expiryDate)}` : 'Within valid active lifecycle period.'
-    },
-    {
-      id: 'credential_not_revoked',
-      label: 'Credential is not revoked',
-      passed: !isRevoked,
-      pending: false,
-      details: isRevoked ? `Revocation reason: "${checks.lifecycle.revocationReason}"` : 'No revocation flags recorded on-chain.'
+      id: 'blockchain_status',
+      label: 'Blockchain ledger connection',
+      status: blockchainStatus,
+      passed: blockchainStatus === 'VERIFIED',
+      pending: blockchainStatus === 'NOT_CONNECTED',
+      failed: blockchainStatus === 'UNAVAILABLE',
+      statusLabel: blockchainStatus.replace('_', ' '),
+      details: blockchainStatus === 'VERIFIED'
+        ? `Proof confirmed on-chain (${checks.blockchain?.network}).`
+        : blockchainStatus === 'NOT_CONNECTED'
+        ? 'Blockchain integration not connected to live network (Prototype mode).'
+        : 'Blockchain ledger node unreachable or proof unavailable.'
     }
   ];
 
@@ -191,15 +211,15 @@ export const VerificationResultCard = ({ result }) => {
         </div>
       </div>
 
-      {/* Complete 7 Verification Checks Checklist */}
+      {/* 5-Vector Verification Audit Checklist */}
       <Card className="space-y-3">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">Multi-Factor Verification Audit Checklist</h3>
-            <p className="text-[11px] text-slate-500">7 independent cryptographic and institutional controls</p>
+            <h3 className="text-sm font-bold text-slate-900">Multi-Factor Verification Audit</h3>
+            <p className="text-[11px] text-slate-500">Explicit status for record, file hash, issuer, lifecycle, and blockchain</p>
           </div>
           <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-            {verificationChecks.filter(c => c.passed).length} of 7 Passed
+            {verificationChecks.filter(c => c.passed).length} of {verificationChecks.length} Passed
           </span>
         </div>
 
@@ -222,14 +242,14 @@ export const VerificationResultCard = ({ result }) => {
                 </div>
               </div>
 
-              <span className={`text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded ${
+              <span className={`text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded shrink-0 ${
                 item.passed 
                   ? 'bg-emerald-50 text-emerald-700' 
                   : item.pending 
                   ? 'bg-amber-50 text-amber-700' 
                   : 'bg-rose-50 text-rose-700'
               }`}>
-                {item.passed ? 'PASSED' : item.pending ? 'PENDING' : 'FAILED'}
+                {item.statusLabel}
               </span>
             </div>
           ))}

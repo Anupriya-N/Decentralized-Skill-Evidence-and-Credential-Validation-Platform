@@ -7,7 +7,7 @@ import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
 import { Footer } from '../../components/layout/Footer';
 import { DemoBanner } from '../../components/common/DemoBanner';
-import { formatDate, truncateHash } from '../../utils/formatUtils';
+import { formatDate } from '../../utils/formatUtils';
 import { 
   Boxes, 
   ArrowLeft, 
@@ -47,6 +47,8 @@ export const BlockchainProofPage = () => {
 
   const proof = credential.blockchainProof;
   const isRevoked = credential.credentialStatus === 'revoked';
+  // Actual live proof exists only if an active live network is connected and has a non-mock tx hash
+  const hasLiveProof = Boolean(isLiveConnected && proof?.transactionHash && !proof?.isMock);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -80,20 +82,20 @@ export const BlockchainProofPage = () => {
           <p className="text-xs text-slate-500 font-mono">Proof Reference: {credential.credentialId}</p>
         </div>
 
-        {/* Live Blockchain Connection State Banner (Section 4 requirement) */}
-        {!isLiveConnected ? (
+        {/* Live Blockchain Connection State Banner */}
+        {!hasLiveProof ? (
           <div className="p-4 bg-slate-900 text-slate-100 rounded-2xl border border-slate-800 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5 font-mono">
                 <ShieldAlert className="w-4 h-4 text-amber-400" />
-                Blockchain integration not connected to live mainnet/testnet
+                Blockchain integration not connected
               </span>
               <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded font-mono text-slate-400">
-                PROTOTYPE EMULATION MODE
+                PROTOTYPE MODE
               </span>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              In accordance with project guidelines, this prototype uses transparent development ledger simulation until an active web3 provider (MetaMask / Ethers.js) is connected. No random fake transaction hashes or misleading block confirmations are displayed as real live chain states.
+              No live blockchain network is currently configured. To maintain cryptographic integrity and prevent false claims, real transaction hashes, block numbers, and smart contract addresses will only appear when connected to an active Web3 provider or live RPC network. Simulated values are never displayed as real blockchain proof.
             </p>
           </div>
         ) : (
@@ -113,7 +115,7 @@ export const BlockchainProofPage = () => {
         <Card className="space-y-5">
           <CardHeader
             title="Cryptographic Proof Parameters"
-            subtitle="Parameters anchored to the distributed ledger registry"
+            subtitle="Parameters anchored to the decentralized credential registry"
           />
 
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono">
@@ -124,9 +126,18 @@ export const BlockchainProofPage = () => {
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Registration Status</dt>
-              <dd className="text-emerald-700 font-bold mt-0.5 flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" />
-                {proof?.registrationStatus?.toUpperCase() || 'REGISTERED'}
+              <dd className={`mt-0.5 font-bold flex items-center gap-1 ${hasLiveProof ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {hasLiveProof ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    REGISTERED ON-CHAIN
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    REGISTRY RECORD CONFIRMED (PENDING ON-CHAIN ANCHOR)
+                  </>
+                )}
               </dd>
             </div>
 
@@ -139,29 +150,29 @@ export const BlockchainProofPage = () => {
 
             <div className="sm:col-span-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Transaction Hash</dt>
-              <dd className="text-brand-700 font-bold mt-0.5 break-all select-all text-[11px]">
-                {proof?.transactionHash || '0x4f8e6c43b9d0e2a1b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0 (Simulated)'}
+              <dd className={`mt-0.5 break-all select-all text-[11px] ${hasLiveProof ? 'text-brand-700 font-bold' : 'text-slate-400 italic font-sans'}`}>
+                {hasLiveProof ? proof.transactionHash : 'Blockchain integration not connected (No live transaction recorded)'}
               </dd>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Blockchain Network</dt>
-              <dd className="text-slate-800 font-medium mt-0.5 font-sans">
-                {proof?.network || 'Ethereum Sepolia (Simulated Ledger)'}
+              <dd className={`mt-0.5 font-medium font-sans ${hasLiveProof ? 'text-slate-800' : 'text-slate-400 italic'}`}>
+                {hasLiveProof ? proof.network : 'Blockchain integration not connected'}
               </dd>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Block Height</dt>
-              <dd className="text-slate-800 font-bold mt-0.5">
-                #{proof?.blockNumber || 7492104}
+              <dd className={`mt-0.5 font-bold ${hasLiveProof ? 'text-slate-800' : 'text-slate-400 italic font-sans font-normal'}`}>
+                {hasLiveProof ? `#${proof.blockNumber}` : 'Not anchored'}
               </dd>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Smart Contract Address</dt>
-              <dd className="text-slate-800 font-semibold mt-0.5 truncate text-[11px]">
-                {proof?.contractAddress || '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e'}
+              <dd className={`mt-0.5 truncate text-[11px] ${hasLiveProof ? 'text-slate-800 font-semibold' : 'text-slate-400 italic font-sans'}`}>
+                {hasLiveProof ? proof.contractAddress : 'No smart contract connected'}
               </dd>
             </div>
 
@@ -173,24 +184,24 @@ export const BlockchainProofPage = () => {
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <dt className="text-slate-400 uppercase text-[10px] font-bold">Anchored Timestamp</dt>
+              <dt className="text-slate-400 uppercase text-[10px] font-bold">Record Created Timestamp</dt>
               <dd className="text-slate-800 font-medium mt-0.5 font-sans">
-                {formatDate(proof?.registeredAt || credential.createdAt)}
+                {formatDate(credential.createdAt)}
               </dd>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
               <dt className="text-slate-400 uppercase text-[10px] font-bold">Revocation Status</dt>
               <dd className={`mt-0.5 font-bold font-sans ${isRevoked ? 'text-rose-600' : 'text-emerald-600'}`}>
-                {isRevoked ? 'REVOKED ON-CHAIN' : 'ACTIVE / UNREVOKED'}
+                {isRevoked ? 'REVOKED ON REGISTRY' : 'ACTIVE / UNREVOKED'}
               </dd>
             </div>
           </dl>
 
-          {/* Explorer Link (Active only when real live network is configured) */}
+          {/* Explorer Link */}
           <div className="pt-2 flex items-center justify-between text-xs border-t border-slate-100">
             <span className="text-slate-500 font-sans">Public Testnet Block Explorer:</span>
-            {isLiveConnected && proof?.transactionHash ? (
+            {hasLiveProof ? (
               <a
                 href={`${networkConfig.explorerBaseUrl}/tx/${proof.transactionHash}`}
                 target="_blank"

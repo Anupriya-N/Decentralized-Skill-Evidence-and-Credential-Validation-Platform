@@ -3,6 +3,26 @@ import { INITIAL_ISSUERS } from '../data/mockIssuers';
 import { INITIAL_CREDENTIALS, INITIAL_SKILLS } from '../data/mockCredentials';
 import { INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS, INITIAL_VERIFICATION_LOGS } from '../data/mockNotifications';
 
+export const INITIAL_VALIDATION_REQUESTS = [
+  {
+    id: 'req-001',
+    credentialId: 'CRED-2025-7801',
+    credentialDbId: 'cred-003',
+    studentId: 'user-student-01',
+    studentName: 'Alex Chen',
+    credentialTitle: 'Advanced Deep Learning and Neural Transformers',
+    issuerId: 'iss-003',
+    issuerName: 'DeepLearning Intelligence Labs',
+    submittedDate: '2025-02-08',
+    status: 'pending', // 'pending' | 'approved' | 'rejected'
+    evidenceFileName: 'Deep_Learning_Specialization_Cert.pdf',
+    fileHash: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+    rejectionReason: null,
+    reviewedAt: null,
+    reviewedBy: null
+  }
+];
+
 const STORAGE_KEYS = {
   USERS: 'certitrust_users_v1',
   CURRENT_USER: 'certitrust_current_user_v1',
@@ -12,6 +32,7 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'certitrust_notifications_v1',
   AUDIT_LOGS: 'certitrust_audit_logs_v1',
   VERIFICATION_LOGS: 'certitrust_verification_logs_v1',
+  VALIDATION_REQUESTS: 'certitrust_validation_requests_v1',
   DEMO_MODE: 'certitrust_demo_mode_v1'
 };
 
@@ -63,6 +84,9 @@ export const storageService = {
   getVerificationLogs: () => getStorageItem(STORAGE_KEYS.VERIFICATION_LOGS, INITIAL_VERIFICATION_LOGS),
   setVerificationLogs: (logs) => setStorageItem(STORAGE_KEYS.VERIFICATION_LOGS, logs),
 
+  getValidationRequests: () => getStorageItem(STORAGE_KEYS.VALIDATION_REQUESTS, INITIAL_VALIDATION_REQUESTS),
+  setValidationRequests: (reqs) => setStorageItem(STORAGE_KEYS.VALIDATION_REQUESTS, reqs),
+
   // Reset demo state back to pristine seed
   resetDemoData: () => {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
@@ -73,5 +97,6 @@ export const storageService = {
     localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(INITIAL_NOTIFICATIONS));
     localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(INITIAL_AUDIT_LOGS));
     localStorage.setItem(STORAGE_KEYS.VERIFICATION_LOGS, JSON.stringify(INITIAL_VERIFICATION_LOGS));
+    localStorage.setItem(STORAGE_KEYS.VALIDATION_REQUESTS, JSON.stringify(INITIAL_VALIDATION_REQUESTS));
   }
 };
