@@ -8,6 +8,9 @@ import { Button } from '../../components/common/Button';
 import { Modal } from '../../components/common/Modal';
 import { QRCodeModal } from '../../components/credentials/QRCodeModal';
 import { FileRehashCheck } from '../../components/verification/FileRehashCheck';
+import { DocumentPreview } from '../../components/common/DocumentPreview';
+import { CredentialTimeline } from '../../components/credentials/CredentialTimeline';
+import { SkillEvidenceMapper } from '../../components/credentials/SkillEvidenceMapper';
 import { formatDate, formatBytes, truncateHash, CATEGORIES } from '../../utils/formatUtils';
 import { 
   Award, 
@@ -22,20 +25,26 @@ import {
   Edit3, 
   AlertTriangle, 
   CheckCircle2, 
-  Share2 
+  Share2,
+  Download,
+  Eye,
+  Layers,
+  RotateCcw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export const CredentialDetailsPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { credentials, refreshData } = useApp();
+  const { credentials, skills, refreshData } = useApp();
 
   const credential = credentials.find(c => c.id === id || c.credentialId === id);
 
   const [showQRModal, setShowQRModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showRecheckSection, setShowRecheckSection] = useState(false);
+  const [showDocPreview, setShowDocPreview] = useState(false);
+  const [showSkillMapper, setShowSkillMapper] = useState(false);
 
   // Edit form state
   const [editTitle, setEditTitle] = useState(credential?.title || '');
@@ -81,6 +90,36 @@ export const CredentialDetailsPage = () => {
     }
   };
 
+  // Download Credential Details (Missing.md item 1.9)
+  const handleDownloadDetails = () => {
+    const reportData = {
+      credentialId: credential.credentialId,
+      title: credential.title,
+      skill: credential.skillName,
+      category: credential.category,
+      issuer: credential.issuerName,
+      issueDate: credential.issueDate,
+      expiryDate: credential.expiryDate || 'Does not expire',
+      sha256Digest: credential.fileHash,
+      blockchainNetwork: credential.blockchainProof?.network || 'Sepolia (Simulated)',
+      smartContract: credential.blockchainProof?.contractAddress || '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e',
+      transactionHash: credential.blockchainProof?.transactionHash || 'N/A',
+      verificationUrl: `${window.location.origin}/verify/${credential.credentialId}`,
+      exportedAt: new Date().toISOString()
+    };
+
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${credential.credentialId}_Audit_Summary.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success('Credential audit details downloaded.');
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -103,15 +142,24 @@ export const CredentialDetailsPage = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="secondary" size="sm" icon={Eye} onClick={() => setShowDocPreview(true)}>
+            Preview Document
+          </Button>
+          <Button variant="secondary" size="sm" icon={Download} onClick={handleDownloadDetails}>
+            Download Summary
+          </Button>
+          <Button variant="secondary" size="sm" icon={Layers} onClick={() => setShowSkillMapper(true)}>
+            Map Skills
+          </Button>
           <Button variant="secondary" size="sm" icon={QrCode} onClick={() => setShowQRModal(true)}>
             QR Code
           </Button>
           <Button variant="secondary" size="sm" icon={Edit3} onClick={() => setShowEditModal(true)}>
-            Edit Metadata
+            Edit
           </Button>
           <Link to={`/verify/${credential.credentialId}`} target="_blank">
             <Button variant="primary" size="sm" icon={ExternalLink}>
-              Verify Proof
+              Verify
             </Button>
           </Link>
         </div>
@@ -193,13 +241,21 @@ export const CredentialDetailsPage = () => {
             </div>
 
             {/* Toggle Recheck */}
-            <div className="pt-2">
+            <div className="pt-2 flex items-center gap-2">
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => setShowRecheckSection(!showRecheckSection)}
               >
                 {showRecheckSection ? 'Hide Re-Hash Tool' : 'Test File Re-Hash Comparison'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Eye}
+                onClick={() => setShowDocPreview(true)}
+              >
+                Preview File
               </Button>
             </div>
 
@@ -209,15 +265,23 @@ export const CredentialDetailsPage = () => {
               </div>
             )}
           </Card>
+
+          {/* Credential Lifecycle Timeline (Missing.md item 1.6 & 1.10 & 1.11) */}
+          <Card className="p-6">
+            <CredentialTimeline
+              credential={credential}
+              onResubmitEvidence={() => navigate(`/student/upload?resubmit=${credential.id}`)}
+            />
+          </Card>
         </div>
 
-        {/* Right Column: Simulated Blockchain Proof Record */}
+        {/* Right Column: Ledger Record & Dedicated Proof Link */}
         <div className="space-y-6">
           <Card className="bg-gradient-to-b from-slate-900 to-navy-950 text-white space-y-4 border-navy-800">
             <div className="flex items-center justify-between border-b border-navy-800 pb-3">
               <div className="flex items-center gap-2">
                 <Boxes className="w-5 h-5 text-brand-400" />
-                <h3 className="text-sm font-bold">Ledger Proof Record</h3>
+                <h3 className="text-sm font-bold">Ledger Proof Anchor</h3>
               </div>
               <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
                 SIMULATION
@@ -235,29 +299,18 @@ export const CredentialDetailsPage = () => {
               </div>
 
               <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
-                <span className="text-[10px] text-slate-400 uppercase block">Contract Address</span>
-                <span className="text-slate-200 text-[11px] break-all">{credential.blockchainProof?.contractAddress}</span>
-              </div>
-
-              <div className="p-2.5 rounded bg-navy-900/80 border border-navy-800">
                 <span className="text-[10px] text-slate-400 uppercase block">Transaction Hash</span>
                 <span className="text-slate-200 text-[11px] break-all">{credential.blockchainProof?.transactionHash}</span>
               </div>
-
-              <div className="flex items-center justify-between p-2.5 rounded bg-navy-900/80 border border-navy-800">
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase block">Block Height</span>
-                  <span className="text-slate-200 font-semibold">#{credential.blockchainProof?.blockNumber}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 uppercase block">Proof Status</span>
-                  <span className="text-emerald-400 font-semibold">Confirmed</span>
-                </div>
-              </div>
             </div>
 
-            <div className="pt-2 text-[11px] text-slate-400 border-t border-navy-800/80">
-              <span>Timestamp: {formatDate(credential.blockchainProof?.registeredAt)}</span>
+            {/* Link to Dedicated Blockchain Proof Page (Section 4 requirement) */}
+            <div className="pt-2">
+              <Link to={`/blockchain-proof/${credential.credentialId}`} className="block">
+                <Button variant="primary" size="sm" className="w-full" icon={ExternalLink}>
+                  View Full Blockchain Proof Page
+                </Button>
+              </Link>
             </div>
           </Card>
         </div>
@@ -270,6 +323,25 @@ export const CredentialDetailsPage = () => {
         credential={credential}
       />
 
+      {/* Document Preview Modal */}
+      <DocumentPreview
+        isOpen={showDocPreview}
+        onClose={() => setShowDocPreview(false)}
+        fileName={credential.fileName}
+        fileSize={credential.fileSize}
+        mimeType={credential.mimeType}
+        fileHash={credential.fileHash}
+      />
+
+      {/* Skill Evidence Mapper Modal */}
+      <SkillEvidenceMapper
+        isOpen={showSkillMapper}
+        onClose={() => setShowSkillMapper(false)}
+        credential={credential}
+        studentSkills={skills.filter(s => s.ownerUserId === credential.ownerUserId)}
+        onSkillsUpdated={() => refreshData()}
+      />
+
       {/* Edit Metadata Modal */}
       <Modal
         isOpen={showEditModal}
@@ -278,7 +350,7 @@ export const CredentialDetailsPage = () => {
       >
         <form onSubmit={handleSaveMetadata} className="space-y-4 text-left">
           <p className="text-xs text-slate-500">
-            Note: Modifying title or description updates display metadata only. The registered SHA-256 binary hash remains unaltered.
+            Modifying title or description updates display metadata only. The registered SHA-256 binary hash remains unaltered.
           </p>
 
           <div>

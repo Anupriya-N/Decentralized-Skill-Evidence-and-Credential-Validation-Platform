@@ -8,6 +8,7 @@ import { LandingPage } from '../pages/public/LandingPage';
 import { AboutPage } from '../pages/public/AboutPage';
 import { PublicVerifyPage } from '../pages/public/PublicVerifyPage';
 import { PublicPortfolioPage } from '../pages/public/PublicPortfolioPage';
+import { BlockchainProofPage } from '../pages/public/BlockchainProofPage';
 
 // Auth pages
 import { LoginPage } from '../pages/auth/LoginPage';
@@ -68,6 +69,7 @@ export const AppRoutes = () => {
       <Route path="/verify/:credentialId" element={<PublicVerifyPage />} />
       <Route path="/verify" element={<PublicVerifyPage />} />
       <Route path="/portfolio/:studentId" element={<PublicPortfolioPage />} />
+      <Route path="/blockchain-proof/:id" element={<BlockchainProofPage />} />
 
       {/* Student Portal */}
       <Route

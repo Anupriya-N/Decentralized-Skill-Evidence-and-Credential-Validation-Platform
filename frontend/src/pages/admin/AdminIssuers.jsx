@@ -4,8 +4,9 @@ import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
 import { Modal } from '../../components/common/Modal';
+import { DocumentPreview } from '../../components/common/DocumentPreview';
 import { formatDate } from '../../utils/formatUtils';
-import { ShieldCheck, Check, X, Ban, RefreshCw, FileText, Globe } from 'lucide-react';
+import { ShieldCheck, Check, X, Ban, RefreshCw, FileText, Globe, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export const AdminIssuers = () => {
@@ -14,6 +15,7 @@ export const AdminIssuers = () => {
   const [activeModalIssuer, setActiveModalIssuer] = useState(null);
   const [modalAction, setModalAction] = useState('approve'); // 'approve' | 'reject' | 'suspend'
   const [reasonInput, setReasonInput] = useState('');
+  const [previewDocIssuer, setPreviewDocIssuer] = useState(null);
 
   const openActionModal = (issuer, action) => {
     setActiveModalIssuer(issuer);
@@ -39,7 +41,7 @@ export const AdminIssuers = () => {
       <div>
         <h1 className="text-xl font-bold text-slate-900">Issuer Governance & Accreditation</h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Approve, suspend, or reject issuing organizations. Status determines verification trust badges platform-wide.
+          Approve, suspend, or reject issuing organizations. Preview institutional charter evidence before rendering decisions.
         </p>
       </div>
 
@@ -68,10 +70,15 @@ export const AdminIssuers = () => {
                     )}
                   </td>
                   <td className="py-3.5 px-4 font-mono text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <FileText className="w-3.5 h-3.5 text-slate-400" />
+                    <button
+                      type="button"
+                      onClick={() => setPreviewDocIssuer(iss)}
+                      className="inline-flex items-center gap-1.5 text-brand-600 hover:text-brand-800 font-medium hover:underline"
+                      title="Preview charter evidence document"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
                       {iss.proofDocumentName || 'Accreditation_Proof.pdf'}
-                    </span>
+                    </button>
                   </td>
                   <td className="py-3.5 px-4">
                     <Badge status={iss.trustStatus} size="sm" />
@@ -118,6 +125,16 @@ export const AdminIssuers = () => {
           </table>
         </div>
       </Card>
+
+      {/* Charter Document Preview Modal (Missing.md item 6.2) */}
+      {previewDocIssuer && (
+        <DocumentPreview
+          isOpen={!!previewDocIssuer}
+          onClose={() => setPreviewDocIssuer(null)}
+          fileName={previewDocIssuer.proofDocumentName || 'Institutional_Charter.pdf'}
+          mimeType="application/pdf"
+        />
+      )}
 
       {/* Action Modal */}
       {activeModalIssuer && (
