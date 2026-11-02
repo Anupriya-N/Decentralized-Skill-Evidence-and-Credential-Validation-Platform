@@ -13,7 +13,7 @@ export const aiService = {
     return Boolean(import.meta.env.VITE_ENABLE_REAL_AI === 'true');
   },
 
-  async extractCertificateDetails(file, studentName = 'Alex Chen', existingCredentials = []) {
+  async extractCertificateDetails(file, studentName = 'Student', existingCredentials = []) {
     if (this.isConfiguredWithBackend()) {
       try {
         const formData = new FormData();

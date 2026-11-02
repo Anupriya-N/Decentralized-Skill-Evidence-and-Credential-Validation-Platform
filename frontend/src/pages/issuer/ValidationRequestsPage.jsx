@@ -24,9 +24,13 @@ export const ValidationRequestsPage = () => {
   const [processingId, setProcessingId] = useState(null);
 
   const handleApprove = async (reqId) => {
+    if (user?.role !== 'issuer' && user?.role !== 'admin') {
+      toast.error('Unauthorized: Only accredited institutional issuers or administrators can validate claims.');
+      return;
+    }
     setProcessingId(reqId);
     try {
-      await approveValidationRequestAction(reqId);
+      await approveValidationRequestAction(reqId, user);
     } catch (err) {
       console.error(err);
     } finally {
@@ -38,9 +42,14 @@ export const ValidationRequestsPage = () => {
     e.preventDefault();
     if (!rejectingReq) return;
 
+    if (user?.role !== 'issuer' && user?.role !== 'admin') {
+      toast.error('Unauthorized: Only accredited institutional issuers or administrators can reject claims.');
+      return;
+    }
+
     setProcessingId(rejectingReq.id);
     try {
-      await rejectValidationRequestAction(rejectingReq.id, rejectionReason);
+      await rejectValidationRequestAction(rejectingReq.id, rejectionReason, user);
       setRejectingReq(null);
     } catch (err) {
       console.error(err);

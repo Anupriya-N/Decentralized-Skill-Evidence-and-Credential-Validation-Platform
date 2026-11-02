@@ -1,11 +1,36 @@
-import { storageService } from './storageService';
+import { storageService } from './storageService.js';
+
+/**
+ * Institutional Accreditation Status Constants
+ */
+export const ISSUER_ACCREDITATION_STATUS = {
+  SUBMITTED: 'submitted',
+  UNDER_REVIEW: 'under_review',
+  DEMO_APPROVED: 'demo_approved',
+  EXTERNALLY_VERIFIED: 'externally_verified',
+  REJECTED: 'rejected',
+  SUSPENDED: 'suspended'
+};
+
+export const ISSUER_STATUS_LABELS = {
+  submitted: 'Application Submitted',
+  under_review: 'Documents Under Review',
+  demo_approved: 'Demo Approval – External Institution Verification Pending',
+  externally_verified: 'Externally Verified Institution',
+  rejected: 'Application Rejected',
+  suspended: 'Suspended',
+  // legacy aliases:
+  trusted: 'Demo Approval – External Institution Verification Pending',
+  pending: 'Application Submitted',
+  untrusted: 'Application Rejected'
+};
 
 /**
  * Issuer Service
- * Manages institutional verification applications, document uploads,
- * pending claim queues, attestations, and approval/rejection workflows.
+ * Strictly separates:
+ * 1. Issuer Accreditation (Platform administrator approves/rejects an institution)
+ * 2. Credential Claim Validation (Authorized institutional issuer approves/rejects student claims)
  */
-
 export const issuerService = {
   getIssuers() {
     return storageService.getIssuers();
@@ -20,8 +45,12 @@ export const issuerService = {
     return storageService.getValidationRequests();
   },
 
-  submitInstitutionApplication(applicationData) {
+  /**
+   * Submits a new institution accreditation application.
+   */
+  submitInstitutionApplication(applicationData, actingUser = null) {
     const issuers = storageService.getIssuers();
+    const timestamp = new Date().toISOString();
     const newIssuer = {
       id: `iss-${Date.now()}`,
       organizationName: applicationData.organizationName,
@@ -30,12 +59,20 @@ export const issuerService = {
       website: applicationData.website,
       description: applicationData.description || '',
       proofDocumentName: applicationData.proofDocumentName || 'Accreditation_Charter.pdf',
-      trustStatus: 'pending',
+      trustStatus: ISSUER_ACCREDITATION_STATUS.SUBMITTED,
       reviewedBy: null,
       reviewedAt: null,
       reviewReason: 'New institution accreditation application submitted.',
-      createdAt: new Date().toISOString(),
-      credentialsIssuedCount: 0
+      createdAt: timestamp,
+      credentialsIssuedCount: 0,
+      history: [
+        {
+          action: 'APPLICATION_SUBMITTED',
+          actor: actingUser?.fullName || 'Applicant Organization',
+          timestamp,
+          notes: 'Accreditation application charter submitted for review.'
+        }
+      ]
     };
 
     const updated = [newIssuer, ...issuers];
@@ -43,53 +80,116 @@ export const issuerService = {
     return newIssuer;
   },
 
-  updateTrustStatus(issuerId, status, reviewReason, reviewerId = 'user-admin-01') {
+  /**
+   * Admin-Only: Modifies institutional accreditation status.
+   * Enforces role authorization: only 'admin' role may perform this action.
+   * Real-world rule: An admin click produces 'demo_approved' ("Demo Approval – External Institution Verification Pending"),
+   * distinguishing demo approval from genuine external institutional verification.
+   */
+  updateTrustStatus(issuerId, status, reviewReason, actingUser = null) {
+    const role = actingUser?.role || (typeof actingUser === 'string' ? 'admin' : null);
+    if (role !== 'admin') {
+      throw new Error('Unauthorized: Only platform administrators can modify institutional accreditation status.');
+    }
+
     const issuers = storageService.getIssuers();
     const index = issuers.findIndex(i => i.id === issuerId);
     if (index === -1) throw new Error('Issuer not found.');
 
+    const targetIssuer = issuers[index];
+    const timestamp = new Date().toISOString();
+
+    // Map 'trusted' to demo_approved to enforce real-world verification disclosure
+    let normalizedStatus = status;
+    if (status === 'trusted') {
+      normalizedStatus = ISSUER_ACCREDITATION_STATUS.DEMO_APPROVED;
+    }
+
+    const newHistoryEntry = {
+      action: `STATUS_CHANGE_TO_${normalizedStatus.toUpperCase()}`,
+      actor: actingUser?.fullName || 'Platform Administrator',
+      actorId: actingUser?.id || 'admin',
+      timestamp,
+      notes: reviewReason || `Accreditation status changed to ${normalizedStatus}.`
+    };
+
     const updated = {
-      ...issuers[index],
-      trustStatus: status,
-      reviewReason,
-      reviewedBy: reviewerId,
-      reviewedAt: new Date().toISOString()
+      ...targetIssuer,
+      trustStatus: normalizedStatus,
+      reviewReason: reviewReason || `Accreditation status set to ${normalizedStatus}.`,
+      reviewedBy: actingUser?.id || 'admin',
+      reviewedAt: timestamp,
+      history: [...(targetIssuer.history || []), newHistoryEntry]
     };
 
     issuers[index] = updated;
     storageService.setIssuers(issuers);
 
-    // Synchronize credentials with updated issuer trust status
+    // Synchronize credentials that reference this issuer
     const creds = storageService.getCredentials();
     const updatedCreds = creds.map(c => {
       if (c.issuerId === issuerId) {
-        return { ...c, issuerStatus: status, updatedAt: new Date().toISOString() };
+        return { 
+          ...c, 
+          issuerStatus: normalizedStatus, 
+          updatedAt: timestamp 
+        };
       }
       return c;
     });
     storageService.setCredentials(updatedCreds);
+
+    // Audit log
+    const auditLogs = storageService.getAuditLogs();
+    const newAudit = {
+      id: `audit-${Date.now()}`,
+      actorUserId: actingUser?.id || 'admin',
+      actorName: actingUser?.fullName || 'Platform Administrator',
+      action: `ISSUER_ACCREDITATION_${normalizedStatus.toUpperCase()}`,
+      entityType: 'Issuer',
+      entityId: issuerId,
+      reason: reviewReason || `Status updated to ${normalizedStatus}.`,
+      createdAt: timestamp
+    };
+    storageService.setAuditLogs([newAudit, ...auditLogs]);
 
     return updated;
   },
 
   /**
    * Approves a student's validation claim.
-   * Persists approval, updates credential to 'trusted', logs audit, and notifies student.
+   * Authorization check: Only user with role 'issuer' or 'admin' can approve.
    */
-  approveValidationRequest(requestId, reviewerUserId = 'user-issuer-01') {
+  approveValidationRequest(requestId, actingUser = null) {
+    const role = actingUser?.role || (typeof actingUser === 'string' ? 'issuer' : null);
+    if (role !== 'issuer' && role !== 'admin') {
+      throw new Error('Unauthorized: Only authorized institutional issuers or administrators can approve student credential claims.');
+    }
+
     const requests = storageService.getValidationRequests();
     const reqIndex = requests.findIndex(r => r.id === requestId);
     if (reqIndex === -1) throw new Error('Validation request not found.');
 
     const targetReq = requests[reqIndex];
     const timestamp = new Date().toISOString();
+    const reviewerUserId = actingUser?.id || 'user-issuer-01';
+    const reviewerName = actingUser?.fullName || targetReq.issuerName || 'Issuing Authority';
+
+    const historyEntry = {
+      action: 'CLAIM_APPROVED',
+      actorId: reviewerUserId,
+      actorName: reviewerName,
+      timestamp,
+      notes: 'Certificate evidence verified against registrar and approved.'
+    };
 
     const updatedReq = {
       ...targetReq,
       status: 'approved',
       rejectionReason: null,
       reviewedBy: reviewerUserId,
-      reviewedAt: timestamp
+      reviewedAt: timestamp,
+      history: [...(targetReq.history || []), historyEntry]
     };
     requests[reqIndex] = updatedReq;
     storageService.setValidationRequests(requests);
@@ -120,11 +220,11 @@ export const issuerService = {
     const newAudit = {
       id: `audit-${Date.now()}`,
       actorUserId: reviewerUserId,
-      actorName: targetReq.issuerName || 'Issuing Authority',
+      actorName: reviewerName,
       action: 'CLAIM_ATTESTATION_APPROVED',
       entityType: 'ValidationRequest',
       entityId: requestId,
-      reason: 'Institutional verification confirmed based on academic credentials.',
+      reason: 'Institutional verification confirmed based on submitted certificate evidence.',
       createdAt: timestamp
     };
     storageService.setAuditLogs([newAudit, ...auditLogs]);
@@ -133,9 +233,9 @@ export const issuerService = {
     const notifs = storageService.getNotifications();
     const newNotif = {
       id: `notif-${Date.now()}`,
-      userId: targetReq.studentId || 'user-student-01',
-      title: 'Credential Attestation Approved!',
-      message: `Your credential claim for "${targetReq.credentialTitle}" was officially verified and approved by ${targetReq.issuerName || 'the issuing authority'}.`,
+      userId: targetReq.studentId,
+      title: 'Credential Claim Approved!',
+      message: `Your credential claim for "${targetReq.credentialTitle}" was officially verified and approved by ${reviewerName}.`,
       type: 'verification',
       readAt: null,
       createdAt: timestamp
@@ -147,9 +247,14 @@ export const issuerService = {
 
   /**
    * Rejects a student's validation claim with required reason.
-   * Persists rejection reason and timestamp, updates credential, and enables resubmission.
+   * Authorization check: Only user with role 'issuer' or 'admin' can reject.
    */
-  rejectValidationRequest(requestId, reason, reviewerUserId = 'user-issuer-01') {
+  rejectValidationRequest(requestId, reason, actingUser = null) {
+    const role = actingUser?.role || (typeof actingUser === 'string' ? 'issuer' : null);
+    if (role !== 'issuer' && role !== 'admin') {
+      throw new Error('Unauthorized: Only authorized institutional issuers or administrators can reject student credential claims.');
+    }
+
     if (!reason || !reason.trim()) {
       throw new Error('A rejection reason must be provided.');
     }
@@ -160,18 +265,29 @@ export const issuerService = {
 
     const targetReq = requests[reqIndex];
     const timestamp = new Date().toISOString();
+    const reviewerUserId = actingUser?.id || 'user-issuer-01';
+    const reviewerName = actingUser?.fullName || targetReq.issuerName || 'Issuing Authority';
+
+    const historyEntry = {
+      action: 'CLAIM_REJECTED',
+      actorId: reviewerUserId,
+      actorName: reviewerName,
+      timestamp,
+      notes: reason.trim()
+    };
 
     const updatedReq = {
       ...targetReq,
       status: 'rejected',
       rejectionReason: reason.trim(),
       reviewedBy: reviewerUserId,
-      reviewedAt: timestamp
+      reviewedAt: timestamp,
+      history: [...(targetReq.history || []), historyEntry]
     };
     requests[reqIndex] = updatedReq;
     storageService.setValidationRequests(requests);
 
-    // Synchronize credential in storage: keep or set claimStatus as 'rejected'
+    // Synchronize credential in storage: set claimStatus as 'rejected'
     const creds = storageService.getCredentials();
     const credIndex = creds.findIndex(c => 
       c.credentialId === targetReq.credentialId || 
@@ -183,7 +299,7 @@ export const issuerService = {
       creds[credIndex] = {
         ...creds[credIndex],
         claimStatus: 'rejected',
-        issuerStatus: 'pending', // Pending resubmission
+        issuerStatus: 'pending',
         rejectionReason: reason.trim(),
         issuerReviewedAt: timestamp,
         issuerReviewedBy: reviewerUserId,
@@ -197,7 +313,7 @@ export const issuerService = {
     const newAudit = {
       id: `audit-${Date.now()}`,
       actorUserId: reviewerUserId,
-      actorName: targetReq.issuerName || 'Issuing Authority',
+      actorName: reviewerName,
       action: 'CLAIM_ATTESTATION_REJECTED',
       entityType: 'ValidationRequest',
       entityId: requestId,
@@ -210,7 +326,7 @@ export const issuerService = {
     const notifs = storageService.getNotifications();
     const newNotif = {
       id: `notif-${Date.now()}`,
-      userId: targetReq.studentId || 'user-student-01',
+      userId: targetReq.studentId,
       title: 'Credential Claim Rejected — Resubmission Allowed',
       message: `Your claim for "${targetReq.credentialTitle}" was rejected: "${reason.trim()}". You may resubmit with updated or supplemental evidence.`,
       type: 'revocation',
@@ -225,7 +341,7 @@ export const issuerService = {
   /**
    * Enqueues or updates a validation claim when student uploads or resubmits evidence
    */
-  submitOrResubmitClaim(claimData) {
+  submitOrResubmitClaim(claimData, actingUser = null) {
     const requests = storageService.getValidationRequests();
     const existingIndex = requests.findIndex(r => 
       r.credentialId === claimData.credentialId || 
@@ -233,12 +349,27 @@ export const issuerService = {
     );
 
     const timestamp = new Date().toISOString();
+    const studentName = claimData.studentName || actingUser?.fullName || 'Student';
+    const studentId = claimData.studentId || actingUser?.id || 'user-student-01';
+
+    const historyEntry = {
+      action: existingIndex !== -1 ? 'CLAIM_RESUBMITTED' : 'CLAIM_SUBMITTED',
+      actorId: studentId,
+      actorName: studentName,
+      timestamp,
+      notes: existingIndex !== -1 
+        ? 'Amended evidence document resubmitted by student.' 
+        : 'Initial credential evidence submitted for institutional validation.'
+    };
+
+    const previousHistory = existingIndex !== -1 ? (requests[existingIndex].history || []) : [];
+
     const newReq = {
       id: existingIndex !== -1 ? requests[existingIndex].id : `req-${Date.now()}`,
       credentialId: claimData.credentialId,
       credentialDbId: claimData.credentialDbId || null,
-      studentId: claimData.studentId || 'user-student-01',
-      studentName: claimData.studentName || 'Alex Chen',
+      studentId,
+      studentName,
       credentialTitle: claimData.credentialTitle,
       issuerId: claimData.issuerId || 'iss-003',
       issuerName: claimData.issuerName || 'Issuing Authority',
@@ -248,7 +379,8 @@ export const issuerService = {
       fileHash: claimData.fileHash,
       rejectionReason: null,
       reviewedAt: null,
-      reviewedBy: null
+      reviewedBy: null,
+      history: [...previousHistory, historyEntry]
     };
 
     if (existingIndex !== -1) {

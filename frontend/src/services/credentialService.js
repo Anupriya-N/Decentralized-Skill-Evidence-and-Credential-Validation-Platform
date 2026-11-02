@@ -1,5 +1,5 @@
-import { storageService } from './storageService';
-import { mockBlockchainAdapter } from '../adapters/blockchain/mockBlockchainAdapter';
+import { storageService } from './storageService.js';
+import { mockBlockchainAdapter } from '../adapters/blockchain/mockBlockchainAdapter.js';
 
 export const credentialService = {
   getAllCredentials() {

@@ -144,7 +144,7 @@ export const UploadEvidencePage = () => {
     try {
       const suggestion = await aiService.extractCertificateDetails(
         selectedFile,
-        user?.fullName || 'Alex Chen',
+        user?.fullName || user?.name || 'Student',
         credentials
       );
       setAiExtractedData(suggestion);
@@ -198,6 +198,7 @@ export const UploadEvidencePage = () => {
     try {
       const newCred = await addCredential({
         ownerUserId: user?.id,
+        studentName: user?.fullName || user?.name || 'Student',
         resubmitCredentialId: resubmitId,
         title,
         skillName,

@@ -14,7 +14,7 @@ export const mockAIAdapter = {
    * @param {Array} existingCredentials
    * @returns {Promise<object>}
    */
-  async extractCertificateDetails(file, studentName = 'Alex Chen', existingCredentials = []) {
+  async extractCertificateDetails(file, studentName = 'Student', existingCredentials = []) {
     await new Promise(resolve => setTimeout(resolve, 800));
 
     const fileNameLower = (file?.name || '').toLowerCase();
@@ -27,7 +27,7 @@ export const mockAIAdapter = {
 
     let baseSuggestion = {
       isSuggestion: true,
-      extractedStudentName: studentName || 'Alex Chen',
+      extractedStudentName: studentName || 'Student',
       confidence: 0.94,
       suggestedTitle: 'AWS Certified Solutions Architect - Associate',
       suggestedIssuer: 'Global Cloud & Tech Certification Authority',
@@ -47,7 +47,7 @@ export const mockAIAdapter = {
     if (fileNameLower.includes('python') || fileNameLower.includes('data')) {
       baseSuggestion = {
         isSuggestion: true,
-        extractedStudentName: studentName || 'Alex Chen',
+        extractedStudentName: studentName || 'Student',
         confidence: 0.91,
         suggestedTitle: 'Professional Python for Data Engineering',
         suggestedIssuer: 'Metropolitan Institute of Technology',
@@ -66,7 +66,7 @@ export const mockAIAdapter = {
     } else if (!fileNameLower.includes('aws') && !fileNameLower.includes('cloud')) {
       baseSuggestion = {
         isSuggestion: true,
-        extractedStudentName: studentName || 'Alex Chen',
+        extractedStudentName: studentName || 'Student',
         confidence: 0.88,
         suggestedTitle: 'Full-Stack Web Application Development Certificate',
         suggestedIssuer: 'Metropolitan Institute of Technology',

@@ -15,13 +15,13 @@ export const RecruiterVerify = () => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const handleRunVerify = (e) => {
+  const handleRunVerify = async (e) => {
     if (e) e.preventDefault();
     if (!credentialId.trim()) return;
 
     setLoading(true);
     try {
-      const res = verificationService.verifyCredential(
+      const res = await verificationService.verifyCredential(
         credentialId.trim(),
         uploadedHash,
         user,
@@ -36,16 +36,23 @@ export const RecruiterVerify = () => {
     }
   };
 
-  const handleFileHashed = (hash) => {
+  const handleFileHashed = async (hash) => {
     setUploadedHash(hash);
     if (credentialId.trim()) {
-      const res = verificationService.verifyCredential(
-        credentialId.trim(),
-        hash,
-        user,
-        'Recruiter Re-Hash'
-      );
-      setResult(res);
+      setLoading(true);
+      try {
+        const res = await verificationService.verifyCredential(
+          credentialId.trim(),
+          hash,
+          user,
+          'Recruiter Re-Hash'
+        );
+        setResult(res);
+      } catch (err) {
+        toast.error('Verification failed: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 

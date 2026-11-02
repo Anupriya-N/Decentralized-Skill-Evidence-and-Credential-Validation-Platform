@@ -5,12 +5,17 @@ export const Badge = ({ status, variant, children, size = 'md', className = '' }
 
   let styles = 'bg-slate-100 text-slate-700 border-slate-200';
 
-  if (
+  if (norm.includes('externally verified') || norm.includes('externally_verified')) {
+    styles = 'bg-emerald-50 text-emerald-700 border-emerald-300 ring-1 ring-emerald-500/20';
+  } else if (norm.includes('demo approval') || norm.includes('demo_approved')) {
+    styles = 'bg-purple-50 text-purple-700 border-purple-300 ring-1 ring-purple-500/20';
+  } else if (
     norm.includes('incomplete') || 
     norm.includes('not checked') || 
     norm.includes('unverified') || 
     norm.includes('pending') || 
-    norm.includes('review')
+    norm.includes('review') ||
+    norm.includes('submitted')
   ) {
     styles = 'bg-amber-50 text-amber-700 border-amber-200 ring-1 ring-amber-500/20';
   } else if (
@@ -20,7 +25,8 @@ export const Badge = ({ status, variant, children, size = 'md', className = '' }
     norm.includes('suspended') || 
     norm.includes('failed') || 
     norm.includes('flagged') || 
-    norm.includes('untrusted')
+    norm.includes('untrusted') ||
+    norm.includes('rejected')
   ) {
     styles = 'bg-rose-50 text-rose-700 border-rose-200 ring-1 ring-rose-500/20';
   } else if (

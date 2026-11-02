@@ -1,7 +1,7 @@
-import { INITIAL_USERS } from '../data/mockUsers';
-import { INITIAL_ISSUERS } from '../data/mockIssuers';
-import { INITIAL_CREDENTIALS, INITIAL_SKILLS } from '../data/mockCredentials';
-import { INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS, INITIAL_VERIFICATION_LOGS } from '../data/mockNotifications';
+import { INITIAL_USERS } from '../data/mockUsers.js';
+import { INITIAL_ISSUERS } from '../data/mockIssuers.js';
+import { INITIAL_CREDENTIALS, INITIAL_SKILLS } from '../data/mockCredentials.js';
+import { INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS, INITIAL_VERIFICATION_LOGS } from '../data/mockNotifications.js';
 
 export const INITIAL_VALIDATION_REQUESTS = [
   {

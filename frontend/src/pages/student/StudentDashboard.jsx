@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
 import { Card, CardHeader } from '../../components/common/Card';
@@ -15,14 +15,19 @@ import {
   ExternalLink, 
   TrendingUp, 
   Sparkles, 
-  CheckCircle2 
+  CheckCircle2,
+  XCircle,
+  RotateCcw,
+  FileCheck2,
+  History
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { formatDate } from '../../utils/formatUtils';
 
 export const StudentDashboard = () => {
   const { user } = useAuth();
-  const { credentials, skills, verificationLogs } = useApp();
+  const navigate = useNavigate();
+  const { credentials, skills, verificationLogs, validationRequests = [] } = useApp();
 
   const studentCreds = credentials.filter(c => c.ownerUserId === user?.id);
   const studentSkills = skills.filter(s => s.ownerUserId === user?.id);
@@ -30,8 +35,13 @@ export const StudentDashboard = () => {
     studentCreds.some(c => c.credentialId === v.credentialId)
   );
 
+  // Student's institutional validation claims
+  const studentValidationRequests = validationRequests.filter(r => 
+    r.studentId === user?.id || studentCreds.some(c => c.credentialId === r.credentialId)
+  );
+
   const verifiedCount = studentCreds.filter(c => c.integrityStatus === 'verified' && c.issuerStatus === 'trusted' && c.credentialStatus === 'active').length;
-  const pendingCount = studentCreds.filter(c => c.issuerStatus === 'pending').length;
+  const pendingCount = studentCreds.filter(c => c.issuerStatus === 'pending' || c.claimStatus === 'pending').length;
   const revokedExpiredCount = studentCreds.filter(c => c.credentialStatus === 'revoked' || c.credentialStatus === 'expired').length;
 
   // Chart data: skills by category
@@ -112,6 +122,91 @@ export const StudentDashboard = () => {
           <span className="text-[11px] text-slate-400 mt-0.5 block">Portfolio skills</span>
         </Card>
       </div>
+
+      {/* Institutional Claim Validation Status & Timeline Widget */}
+      {studentValidationRequests.length > 0 && (
+        <Card className="space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <FileCheck2 className="w-5 h-5 text-brand-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Institutional Claim Validation Queue</h3>
+                <p className="text-[11px] text-slate-500">Review status and audit history for your attested credentials</p>
+              </div>
+            </div>
+            <span className="text-xs font-mono text-slate-400">
+              {studentValidationRequests.filter(r => r.status === 'pending').length} Pending Review
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {studentValidationRequests.map(req => {
+              const isRejected = req.status === 'rejected';
+              const isApproved = req.status === 'approved';
+
+              return (
+                <div 
+                  key={req.id} 
+                  className={`p-4 rounded-xl border text-xs space-y-2 transition-all ${
+                    isRejected 
+                      ? 'bg-rose-50/60 border-rose-200 text-rose-950' 
+                      : isApproved 
+                      ? 'bg-emerald-50/40 border-emerald-200 text-emerald-950' 
+                      : 'bg-slate-50 border-slate-200 text-slate-800'
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900">{req.credentialTitle}</span>
+                        <Badge status={req.status} size="sm" />
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Issuing Authority: <strong className="text-slate-700">{req.issuerName}</strong> • Submitted: {req.submittedDate}
+                      </p>
+                    </div>
+
+                    {isRejected && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        icon={RotateCcw}
+                        onClick={() => navigate(`/student/upload?resubmit=${req.credentialDbId || req.credentialId}`)}
+                      >
+                        Resubmit Evidence
+                      </Button>
+                    )}
+                  </div>
+
+                  {isRejected && req.rejectionReason && (
+                    <div className="p-2.5 rounded-lg bg-rose-100/70 border border-rose-300 text-rose-900 text-[11px]">
+                      <strong>Official Authority Rejection Note:</strong> "{req.rejectionReason}"
+                      <p className="text-[10px] text-rose-700 mt-0.5">
+                        You may upload an amended or supplemental certificate document to start a new verification cycle.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Micro Validation Timeline */}
+                  {req.history && req.history.length > 0 && (
+                    <div className="pt-2 border-t border-slate-200/60 flex items-center gap-4 text-[10px] text-slate-500 overflow-x-auto">
+                      <span className="font-semibold text-slate-600 flex items-center gap-1">
+                        <History className="w-3 h-3" /> Audit Milestones:
+                      </span>
+                      {req.history.map((h, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 shrink-0 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
+                          <strong>{h.action}</strong> ({formatDate(h.timestamp)})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* Grid: Charts & Verification Logs */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

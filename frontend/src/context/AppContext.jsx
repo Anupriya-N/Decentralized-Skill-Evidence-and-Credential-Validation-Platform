@@ -37,13 +37,13 @@ export const AppProvider = ({ children }) => {
     try {
       const newCred = await credentialService.createCredential(credentialData, fileObject, computedSha256);
       
-      // If credential requires issuer verification (e.g. pending issuer or custom issuer), enqueue validation claim
+      // If credential requires issuer verification, enqueue validation claim
       if (newCred.issuerStatus === 'pending') {
         issuerService.submitOrResubmitClaim({
           credentialId: newCred.credentialId,
           credentialDbId: newCred.id,
           studentId: newCred.ownerUserId,
-          studentName: 'Alex Chen',
+          studentName: credentialData.studentName || 'Student',
           credentialTitle: newCred.title,
           issuerId: newCred.issuerId,
           issuerName: newCred.issuerName,
@@ -61,11 +61,11 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const approveValidationRequestAction = async (requestId) => {
+  const approveValidationRequestAction = async (requestId, actingUser = null) => {
     try {
-      const result = issuerService.approveValidationRequest(requestId);
+      const result = issuerService.approveValidationRequest(requestId, actingUser);
       refreshData();
-      toast.success('Student claim verified and approved! Credential marked as trusted.');
+      toast.success('Student claim verified and approved! Credential attested as trusted.');
       return result;
     } catch (err) {
       toast.error('Approval failed: ' + err.message);
@@ -73,9 +73,9 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const rejectValidationRequestAction = async (requestId, reason) => {
+  const rejectValidationRequestAction = async (requestId, reason, actingUser = null) => {
     try {
-      const result = issuerService.rejectValidationRequest(requestId, reason);
+      const result = issuerService.rejectValidationRequest(requestId, reason, actingUser);
       refreshData();
       toast.error(`Student claim rejected: "${reason}"`);
       return result;
@@ -85,50 +85,22 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const updateIssuerTrustStatus = (issuerId, newStatus, reason = '') => {
-    const allIssuers = storageService.getIssuers();
-    const index = allIssuers.findIndex(i => i.id === issuerId);
-    if (index === -1) return;
-
-    allIssuers[index] = {
-      ...allIssuers[index],
-      trustStatus: newStatus,
-      reviewReason: reason || `Updated to ${newStatus} by administrator.`,
-      reviewedAt: new Date().toISOString()
-    };
-    storageService.setIssuers(allIssuers);
-
-    // Also update credentials that depend on this issuer
-    const allCreds = storageService.getCredentials();
-    const updatedCreds = allCreds.map(c => {
-      if (c.issuerId === issuerId) {
-        return { ...c, issuerStatus: newStatus };
-      }
-      return c;
-    });
-    storageService.setCredentials(updatedCreds);
-
-    // Record audit log
-    const currentAudit = storageService.getAuditLogs();
-    const newAudit = {
-      id: `audit-${Date.now()}`,
-      actorUserId: 'user-admin-01',
-      actorName: 'Administrator',
-      action: `ISSUER_${newStatus.toUpperCase()}`,
-      entityType: 'Issuer',
-      entityId: issuerId,
-      reason: reason || `Issuer trust status changed to ${newStatus}.`,
-      createdAt: new Date().toISOString()
-    };
-    storageService.setAuditLogs([newAudit, ...currentAudit]);
-
-    refreshData();
-    toast.success(`Issuer status updated to: ${newStatus.toUpperCase()}`);
+  const updateIssuerTrustStatus = (issuerId, newStatus, reason = '', actingUser = null) => {
+    try {
+      const updated = issuerService.updateTrustStatus(issuerId, newStatus, reason, actingUser);
+      refreshData();
+      toast.success(`Issuer accreditation updated to: ${newStatus.toUpperCase()}`);
+      return updated;
+    } catch (err) {
+      toast.error(err.message);
+      throw err;
+    }
   };
 
-  const revokeCredentialAction = async (credId, reason) => {
+  const revokeCredentialAction = async (credId, reason, actingUser = null) => {
     try {
-      const revoked = await credentialService.revokeCredential(credId, reason);
+      const actorId = actingUser?.id || 'admin';
+      const revoked = await credentialService.revokeCredential(credId, reason, actorId);
       refreshData();
       toast.error(`Credential ${revoked.credentialId} has been revoked.`);
       return revoked;

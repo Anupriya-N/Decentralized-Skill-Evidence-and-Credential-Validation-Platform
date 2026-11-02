@@ -20,10 +20,10 @@ export const PublicVerifyPage = () => {
   const [verificationResult, setVerificationResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const performVerification = (credId, hash = null) => {
+  const performVerification = async (credId, hash = null) => {
     setLoading(true);
     try {
-      const res = verificationService.verifyCredential(credId, hash, null, 'Public Link');
+      const res = await verificationService.verifyCredential(credId, hash, null, 'Public Link');
       setVerificationResult(res);
     } catch (err) {
       toast.error('Verification error: ' + err.message);
