@@ -1,0 +1,480 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum Role {
+  STUDENT
+  INSTITUTION
+  EMPLOYER
+  ADMIN
+}
+
+enum SkillCategory {
+  BLOCKCHAIN
+  FRONTEND
+  BACKEND
+  DATABASE
+  SECURITY
+  CLOUD
+  DATA_SCIENCE
+  SOFT_SKILLS
+  OTHER
+}
+
+enum ProficiencyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum EvidenceType {
+  PROJECT
+  GITHUB_REPO
+  CODE_SAMPLE
+  ASSESSMENT
+  CERTIFICATE_PDF
+  RESEARCH_PAPER
+  OTHER
+}
+
+enum EvidenceStatus {
+  PENDING_REVIEW
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum CredentialType {
+  DEGREE
+  DIPLOMA
+  CERTIFICATE
+  BADGE
+  COURSE_COMPLETION
+  MICRO_CREDENTIAL
+  BOOTCAMP
+}
+
+enum CredentialStatus {
+  DRAFT
+  ACTIVE
+  REVOKED
+  EXPIRED
+  SUSPENDED
+}
+
+enum BadgeLevel {
+  FOUNDATIONAL
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
+}
+
+enum VerificationStatus {
+  VALID
+  REVOKED
+  EXPIRED
+  TAMPERED
+  NOT_FOUND
+  INVALID_SIGNATURE
+}
+
+enum VerificationType {
+  PORTAL
+  QR_CODE
+  API
+  FILE_REHASH
+  PUBLIC_SEARCH
+}
+
+enum AuditAction {
+  USER_REGISTER
+  USER_LOGIN
+  USER_LOGOUT
+  PASSWORD_RESET
+  CREDENTIAL_ISSUED
+  CREDENTIAL_REVOKED
+  EVIDENCE_SUBMITTED
+  EVIDENCE_REVIEWED
+  SKILL_ENDORSED
+  INSTITUTION_ACCREDITED
+  INSTITUTION_SUSPENDED
+  BLOCKCHAIN_ANCHOR_RECORDED
+  VERIFICATION_PERFORMED
+}
+
+enum NotificationType {
+  CREDENTIAL_RECEIVED
+  CREDENTIAL_REVOKED
+  EVIDENCE_APPROVED
+  EVIDENCE_REJECTED
+  NEW_ENDORSEMENT
+  ACCREDITATION_UPDATED
+  SECURITY_ALERT
+  SYSTEM_NOTICE
+}
+
+// -------------------------------------------------------------
+// 1. USER & IDENTITY MODELS
+// -------------------------------------------------------------
+
+model User {
+  id                   String              @id @default(uuid())
+  email                String              @unique
+  passwordHash         String
+  name                 String
+  role                 Role                @default(STUDENT)
+  avatarUrl            String?
+  walletAddress        String?             @unique
+  isVerified           Boolean             @default(false)
+  isActive             Boolean             @default(true)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  refreshTokens        RefreshToken[]
+  profile              Profile?
+  studentProfile       StudentProfile?
+  institutionProfile   InstitutionProfile?
+  employerProfile      EmployerProfile?
+
+  receivedCredentials  Credential[]        @relation("StudentCredentials")
+  issuedCredentials    Credential[]        @relation("IssuerCredentials")
+  evidenceItems        Evidence[]          @relation("StudentEvidence")
+  reviewsConducted     EvidenceReview[]    @relation("ReviewerConducts")
+  verificationLogs     VerificationLog[]   @relation("VerifierLogs")
+  auditLogs            AuditLog[]          @relation("UserAuditLogs")
+  notifications        Notification[]
+
+  @@index([email])
+  @@index([role])
+  @@index([walletAddress])
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  tokenHash   String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isRevoked   Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model Profile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio         String?
+  headline    String?
+  phone       String?
+  location    String?
+  website     String?
+  socialLinks Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model StudentProfile {
+  id                   String         @id @default(uuid())
+  userId               String         @unique
+  user                 User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentNumber        String?
+  degreeProgram        String?
+  graduationYear       Int?
+  gpa                  Float?
+  githubUsername       String?
+  linkedinProfile      String?
+  portfolioSlug        String?        @unique
+  isPortfolioPublic    Boolean        @default(true)
+  skills               StudentSkill[]
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@index([portfolioSlug])
+}
+
+model InstitutionProfile {
+  id                   String      @id @default(uuid())
+  userId               String      @unique
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institutionName      String
+  accreditationBody    String?
+  accreditationNumber  String?
+  isAccredited         Boolean     @default(true)
+  signingPublicKey     String?
+  officialDomain       String?
+  logoUrl              String?
+  contactEmail         String?
+  address              String?
+  country              String?     @default("US")
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([institutionName])
+}
+
+model EmployerProfile {
+  id                   String      @id @default(uuid())
+  userId               String      @unique
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName          String
+  industry             String?
+  companySize          String?
+  website              String?
+  contactPhone         String?
+  isVerifiedCompany    Boolean     @default(true)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([companyName])
+}
+
+// -------------------------------------------------------------
+// 2. SKILLS & TAXONOMY MODELS
+// -------------------------------------------------------------
+
+model Skill {
+  id              String            @id @default(uuid())
+  code            String            @unique
+  name            String
+  category        SkillCategory     @default(OTHER)
+  description     String?
+  standardRef     String?
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  studentSkills   StudentSkill[]
+  evidenceSkills  EvidenceSkill[]
+  credentialSkills CredentialSkill[]
+
+  @@index([category])
+  @@index([name])
+}
+
+model StudentSkill {
+  id              String           @id @default(uuid())
+  studentId       String
+  student         StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skillId         String
+  skill           Skill            @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  proficiency     ProficiencyLevel @default(BEGINNER)
+  score           Float            @default(0.0)
+  endorsementCount Int             @default(0)
+  isVerified      Boolean          @default(false)
+  lastAssessedAt  DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([studentId, skillId])
+  @@index([studentId])
+  @@index([skillId])
+}
+
+// -------------------------------------------------------------
+// 3. EVIDENCE & ARTIFACT MODELS
+// -------------------------------------------------------------
+
+model Evidence {
+  id              String           @id @default(uuid())
+  studentId       String
+  student         User             @relation("StudentEvidence", fields: [studentId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  evidenceType    EvidenceType     @default(PROJECT)
+  status          EvidenceStatus   @default(PENDING_REVIEW)
+  fileUrl         String?
+  fileName        String?
+  fileSizeBytes   Int?
+  mimeType        String?
+  sha256Hash      String           @unique
+  externalUrl     String?
+  extractedSkills Json?
+  aiConfidence    Float?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  skills          EvidenceSkill[]
+  reviews         EvidenceReview[]
+
+  @@index([studentId])
+  @@index([status])
+  @@index([sha256Hash])
+}
+
+model EvidenceSkill {
+  id              String    @id @default(uuid())
+  evidenceId      String
+  evidence        Evidence  @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  skillId         String
+  skill           Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  relevanceScore  Float     @default(1.0)
+  createdAt       DateTime  @default(now())
+
+  @@unique([evidenceId, skillId])
+  @@index([evidenceId])
+  @@index([skillId])
+}
+
+model EvidenceReview {
+  id              String          @id @default(uuid())
+  evidenceId      String
+  evidence        Evidence        @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  reviewerId      String
+  reviewer        User            @relation("ReviewerConducts", fields: [reviewerId], references: [id], onDelete: Restrict)
+  decision        EvidenceStatus
+  score           Float?
+  feedback        String?
+  reviewedAt      DateTime        @default(now())
+
+  @@index([evidenceId])
+  @@index([reviewerId])
+}
+
+// -------------------------------------------------------------
+// 4. CREDENTIALS & BADGES
+// -------------------------------------------------------------
+
+model Credential {
+  id                   String           @id @default(uuid())
+  certificateNumber    String           @unique
+  studentId            String
+  student              User             @relation("StudentCredentials", fields: [studentId], references: [id], onDelete: Restrict)
+  issuerId             String
+  issuer               User             @relation("IssuerCredentials", fields: [issuerId], references: [id], onDelete: Restrict)
+  title                String
+  description          String?
+  type                 CredentialType   @default(CERTIFICATE)
+  status               CredentialStatus @default(ACTIVE)
+  badgeLevel           BadgeLevel       @default(BRONZE)
+  grade                String?
+  courseCode           String?
+  issuedAt             DateTime         @default(now())
+  expiresAt            DateTime?
+  revokedAt            DateTime?
+  revocationReason     String?
+  credentialHash       String           @unique
+  merkleRoot           String?
+  digitalSignature     String
+  qrCodeUrl            String?
+  metadata             Json?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  skills               CredentialSkill[]
+  blockchainAnchor     BlockchainAnchor?
+  verificationLogs     VerificationLog[]
+
+  @@index([studentId])
+  @@index([issuerId])
+  @@index([status])
+  @@index([certificateNumber])
+  @@index([credentialHash])
+}
+
+model CredentialSkill {
+  id              String      @id @default(uuid())
+  credentialId    String
+  credential      Credential  @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  skillId         String
+  skill           Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  weight          Float       @default(1.0)
+  createdAt       DateTime    @default(now())
+
+  @@unique([credentialId, skillId])
+  @@index([credentialId])
+  @@index([skillId])
+}
+
+// -------------------------------------------------------------
+// 5. VERIFICATION & BLOCKCHAIN
+// -------------------------------------------------------------
+
+model VerificationLog {
+  id                  String             @id @default(uuid())
+  credentialId        String
+  credential          Credential         @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  verifierId          String?
+  verifier            User?              @relation("VerifierLogs", fields: [verifierId], references: [id], onDelete: SetNull)
+  verificationType    VerificationType   @default(PORTAL)
+  status              VerificationStatus @default(VALID)
+  checksPassed        Json
+  verificationScore   Float              @default(100.0)
+  ipAddress           String?
+  userAgent           String?
+  verifiedAt          DateTime           @default(now())
+
+  @@index([credentialId])
+  @@index([verifierId])
+  @@index([status])
+}
+
+model BlockchainAnchor {
+  id                  String      @id @default(uuid())
+  credentialId        String      @unique
+  credential          Credential  @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  network             String      @default("Ethereum Sepolia")
+  contractAddress     String
+  transactionHash     String      @unique
+  blockNumber         BigInt
+  merkleRoot          String
+  merkleProof         Json
+  timestamp           DateTime    @default(now())
+  gasUsed             BigInt?
+  isConfirmed         Boolean     @default(true)
+
+  @@index([transactionHash])
+  @@index([contractAddress])
+}
+
+// -------------------------------------------------------------
+// 6. AUDIT & NOTIFICATIONS
+// -------------------------------------------------------------
+
+model AuditLog {
+  id          String       @id @default(uuid())
+  userId      String?
+  user        User?        @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+  action      AuditAction
+  entity      String
+  entityId    String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime     @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  title       String
+  message     String
+  isRead      Boolean          @default(false)
+  actionUrl   String?
+  data        Json?
+  createdAt   DateTime         @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}
