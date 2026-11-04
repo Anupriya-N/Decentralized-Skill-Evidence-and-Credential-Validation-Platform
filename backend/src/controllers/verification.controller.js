@@ -1,10 +1,17 @@
 import { prisma } from '../config/database.js';
-import { computeFileSha256 } from '../utils/crypto.js';
+import {
+  computeFileSha256,
+  normalizeCredentialPayload,
+  computeSha256,
+  verifyCredentialSignature,
+  verifyMerkleRootMatch,
+} from '../utils/crypto.js';
+import { blockchainService } from '../services/blockchain.service.js';
 import fs from 'fs';
 
 export class VerificationController {
   /**
-   * 6-Point Cryptographic Verification
+   * 6-Point Cryptographic & Blockchain Verification Audit
    */
   async verifyCredential(req, res, next) {
     try {
@@ -20,7 +27,7 @@ export class VerificationController {
           ],
         },
         include: {
-          student: { select: { id: true, name: true, email: true, walletAddress: true } },
+          student: { select: { id: true, name: true, walletAddress: true } },
           issuer: {
             include: {
               institutionProfile: true,
@@ -51,13 +58,60 @@ export class VerificationController {
         });
       }
 
-      // Execute 6-Point Verification Checks
-      const signatureValid = Boolean(credential.digitalSignature && credential.digitalSignature.startsWith('0x'));
-      const notRevoked = credential.status !== 'REVOKED';
+      // 1. Independent Payload Normalization & Hash Recalculation
+      const normalizedPayload = normalizeCredentialPayload({
+        certificateNumber: credential.certificateNumber,
+        studentId: credential.studentId,
+        issuerId: credential.issuerId,
+        title: credential.title,
+        type: credential.type,
+        badgeLevel: credential.badgeLevel,
+        grade: credential.grade,
+        courseCode: credential.courseCode,
+        issuedAt: credential.issuedAt,
+      });
+
+      const recalculatedHash = computeSha256(normalizedPayload);
+      const hashIntegrity = credential.credentialHash === recalculatedHash;
+
+      // 2. Genuine ECDSA Signature Verification
+      const expectedIssuerAddress =
+        credential.issuer.walletAddress || credential.issuer?.institutionProfile?.signingPublicKey;
+
+      const signatureResult = verifyCredentialSignature(
+        normalizedPayload,
+        credential.digitalSignature,
+        expectedIssuerAddress
+      );
+      const signatureValid = signatureResult.isValid;
+
+      // 3. Merkle Root Integrity (Recalculated mathematically, no string length check)
+      const merkleRootMatch = credential.merkleRoot
+        ? verifyMerkleRootMatch(recalculatedHash, credential.merkleRoot)
+        : false;
+
+      // 4. Revocation Status Check (Database + On-chain)
+      let notRevoked = credential.status !== 'REVOKED' && !credential.revokedAt;
+
+      // 5. Expiration Date Check
       const notExpired = !credential.expiresAt || new Date(credential.expiresAt) > new Date();
+
+      // 6. Issuer Accreditation Check
       const issuerAccredited = Boolean(credential.issuer?.institutionProfile?.isAccredited);
-      const merkleRootMatch = Boolean(credential.merkleRoot && credential.merkleRoot.length > 10);
-      const blockchainRecorded = Boolean(credential.blockchainAnchor?.isConfirmed);
+
+      // 7. On-chain Verification (Sepolia smart contract check)
+      let blockchainRecorded = false;
+      const onChainStatus = await blockchainService.verifyOnChain(credential.credentialHash, expectedIssuerAddress);
+
+      if (onChainStatus.checked) {
+        if (onChainStatus.revoked) {
+          notRevoked = false;
+        }
+        blockchainRecorded = onChainStatus.isConfirmed;
+      } else {
+        // If contract not configured, reflect actual anchor status
+        blockchainRecorded = Boolean(credential.blockchainAnchor?.isConfirmed);
+      }
 
       const checks = {
         signatureValid,
@@ -72,13 +126,24 @@ export class VerificationController {
       const passedCount = Object.values(checks).filter(Boolean).length;
       const verificationScore = Math.round((passedCount / totalChecks) * 100);
 
+      // Strictly evaluate overall status
       let overallStatus = 'VALID';
-      if (!notRevoked) overallStatus = 'REVOKED';
-      else if (!notExpired) overallStatus = 'EXPIRED';
-      else if (!signatureValid || !merkleRootMatch) overallStatus = 'TAMPERED';
-      else if (!issuerAccredited) overallStatus = 'INVALID_ISSUER';
+      if (!notRevoked) {
+        overallStatus = 'REVOKED';
+      } else if (!notExpired) {
+        overallStatus = 'EXPIRED';
+      } else if (!hashIntegrity || !merkleRootMatch) {
+        overallStatus = 'TAMPERED';
+      } else if (!signatureValid) {
+        overallStatus = 'INVALID_SIGNATURE';
+      } else if (!issuerAccredited) {
+        overallStatus = 'INVALID_ISSUER';
+      } else if (!blockchainRecorded) {
+        // If all cryptographic & database checks pass but blockchain is not yet anchored
+        overallStatus = 'PENDING_BLOCKCHAIN';
+      }
 
-      // Log verification event
+      // Record audit verification log without exposing to public
       await prisma.verificationLog.create({
         data: {
           credentialId: credential.id,
@@ -92,6 +157,7 @@ export class VerificationController {
         },
       });
 
+      // Data Privacy: Clean response omitting private student email and internal logs
       res.status(200).json({
         success: true,
         data: {
@@ -114,15 +180,17 @@ export class VerificationController {
             studentName: credential.student.name,
             studentWallet: credential.student.walletAddress,
             issuerName: credential.issuer.name,
-            issuerAccredited: credential.issuer.institutionProfile?.isAccredited ?? true,
+            issuerAccredited: credential.issuer.institutionProfile?.isAccredited ?? false,
             skills: credential.skills.map((s) => s.skill.name),
             blockchainAnchor: credential.blockchainAnchor
               ? {
                   network: credential.blockchainAnchor.network,
                   transactionHash: credential.blockchainAnchor.transactionHash,
-                  blockNumber: credential.blockchainAnchor.blockNumber.toString(),
+                  blockNumber: credential.blockchainAnchor.blockNumber ? credential.blockchainAnchor.blockNumber.toString() : null,
                   contractAddress: credential.blockchainAnchor.contractAddress,
                   timestamp: credential.blockchainAnchor.timestamp,
+                  isConfirmed: credential.blockchainAnchor.isConfirmed,
+                  status: credential.blockchainAnchor.status,
                 }
               : null,
           },
@@ -135,7 +203,7 @@ export class VerificationController {
   }
 
   /**
-   * Verify uploaded physical/PDF credential by calculating file hash
+   * Verify uploaded physical document by re-hashing binary contents
    */
   async verifyDocument(req, res, next) {
     try {
@@ -144,17 +212,32 @@ export class VerificationController {
       }
 
       const hash = await computeFileSha256(req.file.path);
-      fs.unlinkSync(req.file.path); // remove temp file
+      fs.unlinkSync(req.file.path);
 
-      // Check if hash matches an evidence item or credential hash
       const [evidenceMatch, credentialMatch] = await Promise.all([
         prisma.evidence.findUnique({
           where: { sha256Hash: hash },
-          include: { student: { select: { name: true, email: true } } },
+          select: {
+            id: true,
+            title: true,
+            evidenceType: true,
+            status: true,
+            createdAt: true,
+            student: { select: { id: true, name: true } },
+          },
         }),
         prisma.credential.findFirst({
           where: { credentialHash: hash },
-          include: { student: { select: { name: true } }, issuer: { select: { name: true } } },
+          select: {
+            id: true,
+            certificateNumber: true,
+            title: true,
+            status: true,
+            badgeLevel: true,
+            issuedAt: true,
+            student: { select: { id: true, name: true } },
+            issuer: { select: { id: true, name: true } },
+          },
         }),
       ]);
 

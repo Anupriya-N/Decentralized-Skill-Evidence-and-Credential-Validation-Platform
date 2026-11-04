@@ -2,9 +2,19 @@ import { Router } from 'express';
 import { authController } from '../controllers/auth.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validateRequest } from '../middleware/validate.middleware.js';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 
 const router = Router();
+
+// Strict login brute-force limiter (max 10 attempts per 15 minutes)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many login attempts. Please wait 15 minutes before trying again.' },
+});
 
 const registerSchema = z.object({
   body: z.object({
@@ -31,7 +41,7 @@ const refreshSchema = z.object({
 });
 
 router.post('/register', validateRequest(registerSchema), (req, res, next) => authController.register(req, res, next));
-router.post('/login', validateRequest(loginSchema), (req, res, next) => authController.login(req, res, next));
+router.post('/login', loginLimiter, validateRequest(loginSchema), (req, res, next) => authController.login(req, res, next));
 router.post('/refresh-token', validateRequest(refreshSchema), (req, res, next) => authController.refreshToken(req, res, next));
 router.post('/logout', (req, res, next) => authController.logout(req, res, next));
 router.get('/me', authenticate, (req, res, next) => authController.getMe(req, res, next));

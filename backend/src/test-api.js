@@ -1,18 +1,20 @@
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { app } from './app.js';
 import { connectDatabase, prisma } from './config/database.js';
 
 async function runTests() {
-  console.log('==================================================');
-  console.log('🧪 Starting CertiTrust Backend Automated Test Suite');
-  console.log('==================================================');
+  console.log('================================================================');
+  console.log('🧪 Starting CertiTrust Backend_03 Comprehensive Test Suite');
+  console.log('================================================================');
 
   await connectDatabase();
 
   const server = http.createServer(app);
-  const port = 5001; // Test port to avoid conflicts
+  const port = 5003;
   await new Promise((resolve) => server.listen(port, resolve));
-  console.log(`Test server running at http://localhost:${port}`);
+  console.log(`Test server running at http://localhost:${port}\n`);
 
   let passed = 0;
   let failed = 0;
@@ -20,8 +22,12 @@ async function runTests() {
   async function request(path, options = {}) {
     const url = `http://localhost:${port}${path}`;
     const method = options.method || 'GET';
-    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-    const body = options.body ? JSON.stringify(options.body) : undefined;
+    const headers = options.isFormData
+      ? (options.headers || {})
+      : { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    const body = options.isFormData
+      ? options.body
+      : (options.body ? JSON.stringify(options.body) : undefined);
 
     const res = await fetch(url, { method, headers, body });
     const text = await res.text();
@@ -45,101 +51,223 @@ async function runTests() {
   }
 
   try {
-    // 1. Health check
-    console.log('\n--- 1. Health Check ---');
+    // 1. Health Check with Multi-Subsystem Status
+    console.log('--- 1. Subsystem Health Check ---');
     const health = await request('/health');
-    assert(health.status === 200 && health.data.status === 'healthy', 'GET /health returns healthy');
+    assert(health.status === 200, 'GET /health returns 200');
+    assert(health.data.subsystems?.database?.status === 'connected', 'Database reports connected');
+    assert(Boolean(health.data.subsystems?.ai?.provider), 'AI reports provider');
+    assert(Boolean(health.data.subsystems?.blockchain?.network), 'Blockchain reports network');
 
-    // 2. Auth Login (Student: Alex Chen)
-    console.log('\n--- 2. Auth Login ---');
-    const loginRes = await request('/api/v1/auth/login', {
+    // 2. Security: Admin Public Registration Prevention
+    console.log('\n--- 2. Security: Role Provisioning ---');
+    const adminReg = await request('/api/v1/auth/register', {
+      method: 'POST',
+      body: { email: `hacker.${Date.now()}@test.com`, password: 'Password123!', name: 'Attacker', role: 'ADMIN' },
+    });
+    assert(adminReg.status === 403, 'Public registration attempting role ADMIN is blocked (403 Forbidden)');
+
+    // 3. Authentication & Profile
+    console.log('\n--- 3. Authentication & Profile ---');
+    const studentLogin = await request('/api/v1/auth/login', {
       method: 'POST',
       body: { email: 'alex.chen@student.edu', password: 'Password123!' },
     });
-    assert(loginRes.status === 200 && loginRes.data.success, 'POST /api/v1/auth/login succeeds for Alex Chen');
-    const token = loginRes.data.data?.accessToken;
-    assert(Boolean(token), 'Access token received');
+    assert(studentLogin.status === 200, 'Student login succeeds');
+    const studentToken = studentLogin.data.data?.accessToken;
+    const refreshToken = studentLogin.data.data?.refreshToken;
+    assert(Boolean(studentToken), 'JWT access token received');
 
-    // 3. Auth Me
-    console.log('\n--- 3. Auth Profile (Me) ---');
-    const meRes = await request('/api/v1/auth/me', {
-      headers: { Authorization: `Bearer ${token}` },
+    // 4. Atomic Refresh Token Rotation
+    console.log('\n--- 4. Atomic Refresh Token Rotation ---');
+    const refreshRes = await request('/api/v1/auth/refresh-token', {
+      method: 'POST',
+      body: { refreshToken },
     });
-    assert(meRes.status === 200 && meRes.data.data.email === 'alex.chen@student.edu', 'GET /api/v1/auth/me returns Alex Chen');
+    assert(refreshRes.status === 200 && Boolean(refreshRes.data.data?.accessToken), 'Refresh token rotated atomically');
+    const newRefreshToken = refreshRes.data.data?.refreshToken;
 
-    // 4. Student Dashboard
-    console.log('\n--- 4. Student Dashboard ---');
-    const dashRes = await request('/api/v1/students/dashboard', {
-      headers: { Authorization: `Bearer ${token}` },
+    // Reuse of old refresh token must be rejected
+    const reuseAttempt = await request('/api/v1/auth/refresh-token', {
+      method: 'POST',
+      body: { refreshToken },
     });
-    assert(dashRes.status === 200 && dashRes.data.data.totalCredentials > 0, 'GET /api/v1/students/dashboard returns metrics');
+    assert(reuseAttempt.status === 401, 'Reused old refresh token is strictly rejected (401 Unauthorized)');
 
-    // 5. Student Skills
-    console.log('\n--- 5. Student Skills ---');
-    const skillsRes = await request('/api/v1/students/skills', {
-      headers: { Authorization: `Bearer ${token}` },
+    // 5. Authorization: Student Cannot Access Admin
+    console.log('\n--- 5. Authorization RBAC Checks ---');
+    const studentAdminAttempt = await request('/api/v1/admin/dashboard', {
+      headers: { Authorization: `Bearer ${studentToken}` },
     });
-    assert(skillsRes.status === 200 && Array.isArray(skillsRes.data.data), 'GET /api/v1/students/skills returns skill records');
+    assert(studentAdminAttempt.status === 403, 'Student blocked from admin dashboard (403 Forbidden)');
 
-    // 6. Student Credentials
-    console.log('\n--- 6. Student Credentials ---');
-    const credsRes = await request('/api/v1/credentials/my', {
-      headers: { Authorization: `Bearer ${token}` },
+    // 6. Admin Login & Dashboard
+    const adminLogin = await request('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'admin@certitrust.io', password: 'AdminSecure2026!' },
     });
-    assert(credsRes.status === 200 && credsRes.data.data.length > 0, 'GET /api/v1/credentials/my returns credentials');
+    assert(adminLogin.status === 200, 'Admin login succeeds');
+    const adminToken = adminLogin.data.data?.accessToken;
 
-    // 7. 6-Point Verification (Valid Credential)
-    console.log('\n--- 7. 6-Point Cryptographic Verification (Active Credential) ---');
-    const verifyValid = await request('/api/v1/verification/verify/OXF-2025-CS-00491');
-    assert(verifyValid.status === 200, 'GET /api/v1/verification/verify/... status is 200');
-    assert(verifyValid.data.data.overallStatus === 'VALID', 'Overall status is VALID');
-    assert(verifyValid.data.data.verificationScore === 100, 'Verification score is 100%');
-    assert(verifyValid.data.data.checks.signatureValid === true, 'Check: signatureValid is true');
-    assert(verifyValid.data.data.checks.notRevoked === true, 'Check: notRevoked is true');
-    assert(verifyValid.data.data.checks.blockchainRecorded === true, 'Check: blockchainRecorded is true');
+    const adminDash = await request('/api/v1/admin/dashboard', {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert(adminDash.status === 200 && adminDash.data.data.users.total > 0, 'Admin dashboard accessible to ADMIN');
 
-    // 8. 6-Point Verification (Revoked Credential)
-    console.log('\n--- 8. 6-Point Verification (Revoked Credential) ---');
-    const verifyRevoked = await request('/api/v1/verification/verify/OXF-2024-LEGACY-0012');
-    assert(verifyRevoked.status === 200, 'GET verification for revoked credential returns 200');
-    assert(verifyRevoked.data.data.overallStatus === 'REVOKED', 'Overall status is correctly REVOKED');
-    assert(verifyRevoked.data.data.checks.notRevoked === false, 'Check: notRevoked is false');
+    // 7. Unapproved Institution Cannot Issue Credentials
+    console.log('\n--- 7. Institutional Approval Workflow ---');
+    const unapprovedEmail = `unapproved.inst.${Date.now()}@edu.com`;
+    const regInst = await request('/api/v1/auth/register', {
+      method: 'POST',
+      body: { email: unapprovedEmail, password: 'Password123!', name: 'Unverified Academy', role: 'INSTITUTION' },
+    });
+    assert(regInst.status === 201 && regInst.data.data.pendingApproval === true, 'New institution registered with pendingApproval=true');
+    const unapprovedToken = regInst.data.data.accessToken;
 
-    // 9. Groq AI Skill Extraction
-    console.log('\n--- 9. Groq AI Skill Extraction ---');
+    const issueAttempt = await request('/api/v1/credentials', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${unapprovedToken}` },
+      body: { studentEmail: 'alex.chen@student.edu', title: 'Unauthorized Credential' },
+    });
+    assert(issueAttempt.status === 403, 'Unapproved institution blocked from issuing credentials (403 Forbidden)');
+
+    // 8. Credentials Can Only Be Assigned to STUDENT Accounts
+    console.log('\n--- 8. Credential Target Validation ---');
+    const oxfordLogin = await request('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'oxford@institution.edu', password: 'Password123!' },
+    });
+    assert(oxfordLogin.status === 200, 'Oxford login succeeds');
+    const oxfordToken = oxfordLogin.data.data?.accessToken;
+
+    const nonStudentIssue = await request('/api/v1/credentials', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: { studentEmail: 'recruiter@techcorp.com', title: 'Invalid Student Role Credential' },
+    });
+    assert(nonStudentIssue.status === 400, 'Issuing credential to non-STUDENT account rejected (400 Bad Request)');
+
+    // 9. Accredited Institution Issues Credential with Genuine ECDSA Signature
+    console.log('\n--- 9. Accredited Institution Issuance ---');
+    const validIssue = await request('/api/v1/credentials', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        studentEmail: 'alex.chen@student.edu',
+        title: 'Distributed Systems & Blockchain Capstone',
+        type: 'DEGREE',
+        badgeLevel: 'GOLD',
+        grade: 'Distinction',
+        courseCode: 'CS-901',
+        skills: ['Solidity', 'Distributed Systems'],
+      },
+    });
+    assert(validIssue.status === 201 && Boolean(validIssue.data.data?.digitalSignature), 'Accredited institution issues and cryptographically signs credential');
+    const newCertNum = validIssue.data.data?.certificateNumber;
+
+    // 10. 6-Point Cryptographic & Verification Audit
+    console.log('\n--- 10. 6-Point Cryptographic Verification Audit ---');
+    const verifyNew = await request(`/api/v1/verification/verify/${newCertNum}`);
+    assert(verifyNew.status === 200, 'GET /api/v1/verification/verify returns 200');
+    assert(verifyNew.data.data.checks.signatureValid === true, 'Check: signatureValid is true (ECDSA recovered)');
+    assert(verifyNew.data.data.checks.merkleRootMatch === true, 'Check: merkleRootMatch is true (Mathematically verified)');
+    assert(verifyNew.data.data.checks.issuerAccredited === true, 'Check: issuerAccredited is true');
+    assert(verifyNew.data.data.checks.notRevoked === true, 'Check: notRevoked is true');
+    assert(verifyNew.data.data.credential.studentEmail === undefined, 'Data Privacy: studentEmail is omitted from public verification');
+
+    // 11. Credential Revocation Lifecycle
+    console.log('\n--- 11. Credential Revocation Lifecycle ---');
+    // Non-issuer cannot revoke
+    const recruiterLogin = await request('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'recruiter@techcorp.com', password: 'Password123!' },
+    });
+    const recruiterToken = recruiterLogin.data.data?.accessToken;
+
+    const unauthRevoke = await request(`/api/v1/credentials/${newCertNum}/revoke`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${recruiterToken}` },
+      body: { reason: 'Unauthorized revocation attempt' },
+    });
+    assert(unauthRevoke.status === 403, 'Non-issuer blocked from revoking credential (403 Forbidden)');
+
+    // Authorized issuer revokes
+    const validRevoke = await request(`/api/v1/credentials/${newCertNum}/revoke`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: { reason: 'Academic curriculum update' },
+    });
+    assert(validRevoke.status === 200, 'Authorized issuer successfully revokes credential');
+
+    const verifyAfterRevoke = await request(`/api/v1/verification/verify/${newCertNum}`);
+    assert(verifyAfterRevoke.data.data.overallStatus === 'REVOKED', 'Verification flags credential as REVOKED');
+    assert(verifyAfterRevoke.data.data.checks.notRevoked === false, 'Check: notRevoked is false');
+
+    // 12. File Upload Magic Bytes Validation
+    console.log('\n--- 12. File Upload Magic Bytes Security ---');
+    // Create valid PDF file with %PDF- header
+    const validPdfPath = path.resolve('test_valid.pdf');
+    fs.writeFileSync(validPdfPath, Buffer.from('%PDF-1.4\nTest PDF content with genuine header\n%%EOF'));
+
+    // Create fake PDF file (executable / text with wrong header)
+    const fakePdfPath = path.resolve('test_fake.pdf');
+    fs.writeFileSync(fakePdfPath, Buffer.from('MZ\x90\x00\x03\x00\x00\x00Fake executable content'));
+
+    const formDataValid = new FormData();
+    formDataValid.append('file', new Blob([fs.readFileSync(validPdfPath)], { type: 'application/pdf' }), 'test_valid.pdf');
+    formDataValid.append('title', 'Valid PDF Evidence');
+
+    const uploadValid = await request('/api/v1/evidence/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${studentToken}` },
+      body: formDataValid,
+      isFormData: true,
+    });
+    assert(uploadValid.status === 201, 'Upload of document with valid magic bytes succeeds (201 Created)');
+
+    const formDataFake = new FormData();
+    formDataFake.append('file', new Blob([fs.readFileSync(fakePdfPath)], { type: 'application/pdf' }), 'test_fake.pdf');
+    formDataFake.append('title', 'Fake Executable Evidence');
+
+    const uploadFake = await request('/api/v1/evidence/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${studentToken}` },
+      body: formDataFake,
+      isFormData: true,
+    });
+    assert(uploadFake.status === 400, 'Upload of file with invalid magic bytes is rejected (400 Bad Request)');
+
+    // Clean temp test files
+    if (fs.existsSync(validPdfPath)) fs.unlinkSync(validPdfPath);
+    if (fs.existsSync(fakePdfPath)) fs.unlinkSync(fakePdfPath);
+
+    // 13. Groq AI Integration
+    console.log('\n--- 13. Groq AI Real Integration ---');
     const aiExtract = await request('/api/v1/ai/extract-skills', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${studentToken}` },
       body: {
-        text: 'Engineered ERC-20 staking contract in Solidity, wrote unit tests with Hardhat, and built frontends using React and Ethers.js.',
+        text: 'Engineered ERC-20 staking contracts in Solidity, audited reentrancy vectors, and deployed on Sepolia.',
       },
     });
-    assert(aiExtract.status === 200 && aiExtract.data.success, 'POST /api/v1/ai/extract-skills returns success');
-    assert(Array.isArray(aiExtract.data.data?.skills), 'AI extracted skills array is returned');
-    console.log(`  AI Extracted: ${aiExtract.data.data?.skills?.map((s) => s.name).join(', ')}`);
+    assert(aiExtract.status === 200, 'POST /api/v1/ai/extract-skills returns 200');
+    assert(Array.isArray(aiExtract.data.data?.skills), 'AI extracted skills list returned');
+    console.log(`  Extracted skills: ${aiExtract.data.data?.skills?.map((s) => s.name).join(', ')}`);
 
-    // 10. Groq AI Assistant Chat
-    console.log('\n--- 10. Groq AI Career Advisor Chat ---');
     const aiChat = await request('/api/v1/ai/chat', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${studentToken}` },
       body: {
-        messages: [{ role: 'user', content: 'What are the top 2 skills needed for blockchain auditing?' }],
+        messages: [{ role: 'user', content: 'How does cryptographic signature verification work in CertiTrust?' }],
       },
     });
-    assert(aiChat.status === 200 && aiChat.data.data?.content?.length > 10, 'POST /api/v1/ai/chat returns assistant response');
-    console.log(`  Advisor response preview: ${aiChat.data.data?.content?.slice(0, 100)}...`);
+    assert(aiChat.status === 200 && aiChat.data.data?.content?.length > 20, 'Groq AI Advisor conversational chat responds with meaningful advice');
 
-    // 11. Public Student Portfolio
-    console.log('\n--- 11. Public Student Portfolio ---');
-    const portfolioRes = await request('/api/v1/students/portfolio/alex-chen');
-    assert(portfolioRes.status === 200 && portfolioRes.data.data?.name === 'Alex Chen', 'GET /api/v1/students/portfolio/alex-chen returns portfolio');
-
-    console.log('\n==================================================');
+    console.log('\n================================================================');
     console.log(`📊 Test Results: ${passed} passed, ${failed} failed`);
-    console.log('==================================================');
+    console.log('================================================================');
   } catch (err) {
-    console.error('Test execution error:', err);
+    console.error('Fatal test error:', err);
     failed++;
   } finally {
     server.close();

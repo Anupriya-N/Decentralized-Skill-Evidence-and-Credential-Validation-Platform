@@ -27,7 +27,7 @@ export async function authenticate(req, _res, next) {
       decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
-        throw new UnauthorizedError('Token has expired');
+        throw new UnauthorizedError('Authentication token has expired');
       }
       throw new UnauthorizedError('Invalid authentication token');
     }
@@ -59,6 +59,9 @@ export async function authenticate(req, _res, next) {
   }
 }
 
+/**
+ * RBAC authorization with strict institutional accreditation and employer verification checks
+ */
 export function authorize(...allowedRoles) {
   const normalizedAllowedRoles = allowedRoles.map((r) => normalizeRole(r));
 
@@ -67,12 +70,39 @@ export function authorize(...allowedRoles) {
       return next(new UnauthorizedError('User is not authenticated'));
     }
 
-    if (!normalizedAllowedRoles.includes(normalizeRole(req.user.role))) {
+    const userRole = normalizeRole(req.user.role);
+
+    // If user is ADMIN, grant access
+    if (userRole === 'ADMIN') {
+      return next();
+    }
+
+    if (!normalizedAllowedRoles.includes(userRole)) {
       return next(
         new ForbiddenError(
           `User role '${req.user.role}' is not authorized to access this resource`
         )
       );
+    }
+
+    // STRICT: Unapproved institutions cannot issue credentials or perform institutional actions
+    if (userRole === 'INSTITUTION') {
+      const isAccredited = req.user.rawUser?.institutionProfile?.isAccredited;
+      if (!isAccredited) {
+        return next(
+          new ForbiddenError('Institution account is pending administrator accreditation review')
+        );
+      }
+    }
+
+    // STRICT: Unapproved employers cannot perform candidate evaluations
+    if (userRole === 'EMPLOYER') {
+      const isVerified = req.user.rawUser?.employerProfile?.isVerifiedCompany;
+      if (!isVerified) {
+        return next(
+          new ForbiddenError('Employer account is pending administrator verification review')
+        );
+      }
     }
 
     next();

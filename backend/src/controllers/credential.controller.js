@@ -1,11 +1,19 @@
 import { prisma } from '../config/database.js';
-import { BadRequestError, NotFoundError } from '../utils/errors.js';
-import { computeSha256, generateCertificateNumber, generateDigitalSignature, computeMerkleRoot } from '../utils/crypto.js';
+import { BadRequestError, NotFoundError, ForbiddenError } from '../utils/errors.js';
+import {
+  computeSha256,
+  generateCertificateNumber,
+  normalizeCredentialPayload,
+  signCredentialPayload,
+  computeMerkleRoot,
+} from '../utils/crypto.js';
 import { generateQrDataUrl, generateQrSvg } from '../utils/qr.js';
+import { blockchainService } from '../services/blockchain.service.js';
+import { env } from '../config/env.js';
 
 export class CredentialController {
   /**
-   * Issue a new credential (Institution only)
+   * Issue a new credential (Institution only, must be accredited)
    */
   async issue(req, res, next) {
     try {
@@ -27,7 +35,13 @@ export class CredentialController {
         throw new BadRequestError('Credential title is required');
       }
 
-      // Find student
+      // 1. Authorization: Only approved institutions may issue
+      const isAccredited = req.user.role === 'ADMIN' || Boolean(req.user.rawUser?.institutionProfile?.isAccredited);
+      if (!isAccredited) {
+        throw new ForbiddenError('Only accredited institutions are authorized to issue credentials');
+      }
+
+      // 2. Find student and enforce: Only STUDENT accounts may receive student credentials
       let student = await prisma.user.findFirst({
         where: {
           OR: [
@@ -38,14 +52,58 @@ export class CredentialController {
       });
 
       if (!student) {
-        throw new NotFoundError('Student not found for credential assignment');
+        throw new NotFoundError('Target student record not found for credential assignment');
+      }
+
+      if (student.role !== 'STUDENT') {
+        throw new BadRequestError('Credentials can only be assigned to accounts with the STUDENT role');
+      }
+
+      // 3. Security: Issuers cannot issue credentials to themselves
+      if (student.id === issuerId) {
+        throw new ForbiddenError('Issuing institutions cannot issue student credentials to themselves');
+      }
+
+      // 4. Retrieve institutional signing key
+      const signingKey =
+        req.user.rawUser?.institutionProfile?.signingPrivateKey ||
+        process.env.INSTITUTION_SIGNING_KEY ||
+        env.BLOCKCHAIN_PRIVATE_KEY;
+
+      if (!signingKey || signingKey.length < 64) {
+        throw new BadRequestError(
+          'Institutional ECDSA private signing key is not configured. Cannot generate genuine cryptographic signature.'
+        );
       }
 
       const certNumber = generateCertificateNumber('CRT', courseCode || 'SKILL');
-      const credentialHash = computeSha256(`${certNumber}:${student.id}:${issuerId}:${Date.now()}`);
-      const digitalSignature = generateDigitalSignature(credentialHash);
+      const issuedAtDate = new Date();
+
+      // 5. Deterministic payload normalization
+      const normalizedPayload = normalizeCredentialPayload({
+        certificateNumber: certNumber,
+        studentId: student.id,
+        issuerId,
+        title,
+        type,
+        badgeLevel,
+        grade,
+        courseCode,
+        issuedAt: issuedAtDate,
+      });
+
+      // 6. Independent hash computation
+      const credentialHash = computeSha256(normalizedPayload);
+
+      // 7. Genuine Ethereum ECDSA digital signature
+      const { signature } = await signCredentialPayload(normalizedPayload, signingKey);
       const merkleRoot = computeMerkleRoot([credentialHash]);
 
+      // 8. Genuine Blockchain Anchor Submission (nullable for pending, no fake hashes)
+      const issuerWallet = req.user.rawUser?.walletAddress || req.user.rawUser?.institutionProfile?.signingPublicKey;
+      const anchorResult = await blockchainService.anchorCredential(credentialHash, issuerWallet);
+
+      // 9. Store in PostgreSQL
       const credential = await prisma.credential.create({
         data: {
           certificateNumber: certNumber,
@@ -57,31 +115,33 @@ export class CredentialController {
           badgeLevel,
           grade,
           courseCode,
+          issuedAt: issuedAtDate,
           credentialHash,
           merkleRoot,
-          digitalSignature,
+          digitalSignature: signature,
           expiresAt: expiresAt ? new Date(expiresAt) : null,
-          qrCodeUrl: `/api/v1/credentials/qr/${certNumber}`,
+          qrCodeUrl: `${env.FRONTEND_URL}/verify/${certNumber}`,
           blockchainAnchor: {
             create: {
-              network: 'Ethereum Sepolia',
-              contractAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-              transactionHash: '0x' + computeSha256(`anchor:${certNumber}:${Date.now()}`),
-              blockNumber: BigInt(5895000 + Math.floor(Math.random() * 500)),
+              network: anchorResult.network || 'Ethereum Sepolia',
+              contractAddress: anchorResult.contractAddress,
+              transactionHash: anchorResult.transactionHash,
+              blockNumber: anchorResult.blockNumber,
               merkleRoot,
-              merkleProof: ['0x1111...', '0x2222...'],
-              isConfirmed: true,
+              merkleProof: [credentialHash],
+              isConfirmed: anchorResult.isConfirmed,
+              status: anchorResult.status,
             },
           },
         },
         include: {
-          student: { select: { id: true, name: true, email: true } },
-          issuer: { select: { id: true, name: true } },
+          student: { select: { id: true, name: true, walletAddress: true } },
+          issuer: { select: { id: true, name: true, institutionProfile: true } },
           blockchainAnchor: true,
         },
       });
 
-      // Link any skill tags passed
+      // Link skills
       if (Array.isArray(skills) && skills.length > 0) {
         for (const skillItem of skills) {
           const skillName = typeof skillItem === 'string' ? skillItem : skillItem.name;
@@ -93,7 +153,7 @@ export class CredentialController {
             skill = await prisma.skill.create({
               data: {
                 name: skillName,
-                code: skillName.toUpperCase().replace(/[^A-Z0-9]/g, '_'),
+                code: skillName.toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 30),
                 category: 'OTHER',
               },
             });
@@ -109,31 +169,35 @@ export class CredentialController {
         }
       }
 
-      // Record audit event
+      // Audit Log
       await prisma.auditLog.create({
         data: {
           userId: issuerId,
           action: 'CREDENTIAL_ISSUED',
           entity: 'CREDENTIAL',
           entityId: credential.id,
-          details: { certificateNumber: certNumber, studentId: student.id },
+          details: {
+            certificateNumber: certNumber,
+            studentId: student.id,
+            blockchainConfirmed: anchorResult.isConfirmed,
+          },
         },
       });
 
-      // Notify student
+      // Student Notification
       await prisma.notification.create({
         data: {
           userId: student.id,
           type: 'CREDENTIAL_RECEIVED',
           title: 'New Credential Issued',
-          message: `You have received a new verifiable credential: "${title}"`,
+          message: `You have received a new verified credential: "${title}"`,
           actionUrl: `/student/credentials/${credential.id}`,
         },
       });
 
       res.status(201).json({
         success: true,
-        message: 'Credential successfully issued and anchored',
+        message: 'Credential successfully issued and cryptographically signed',
         data: credential,
       });
     } catch (error) {
@@ -142,15 +206,15 @@ export class CredentialController {
   }
 
   /**
-   * Revoke a credential (Institution or Admin)
+   * Revoke a credential (Only authorized issuer or admin)
    */
   async revoke(req, res, next) {
     try {
       const { id } = req.params;
       const { reason } = req.body;
 
-      const credential = await prisma.credential.findUnique({
-        where: { id },
+      const credential = await prisma.credential.findFirst({
+        where: { OR: [{ id }, { certificateNumber: id }] },
       });
 
       if (!credential) {
@@ -161,8 +225,13 @@ export class CredentialController {
         throw new BadRequestError('Credential is already revoked');
       }
 
+      // Priority 4.3: Only authorized issuers may revoke their own credentials
+      if (req.user.role !== 'ADMIN' && credential.issuerId !== req.user.id) {
+        throw new ForbiddenError('Only the issuing institution or an administrator can revoke this credential');
+      }
+
       const updated = await prisma.credential.update({
-        where: { id },
+        where: { id: credential.id },
         data: {
           status: 'REVOKED',
           revokedAt: new Date(),
@@ -170,7 +239,12 @@ export class CredentialController {
         },
       });
 
-      // Audit log
+      // On-chain revocation if blockchain is configured
+      if (credential.credentialHash) {
+        await blockchainService.revokeOnChain(credential.credentialHash);
+      }
+
+      // Audit Log
       await prisma.auditLog.create({
         data: {
           userId: req.user.id,
@@ -181,7 +255,7 @@ export class CredentialController {
         },
       });
 
-      // Notify student
+      // Student Notification
       await prisma.notification.create({
         data: {
           userId: credential.studentId,
@@ -203,7 +277,7 @@ export class CredentialController {
   }
 
   /**
-   * Get student credentials
+   * Get student credentials (Private to student)
    */
   async getMyCredentials(req, res, next) {
     try {
@@ -235,7 +309,7 @@ export class CredentialController {
   }
 
   /**
-   * Get credential by ID or Certificate Number
+   * Get credential by ID or Certificate Number (Sanitized: No student email exposed)
    */
   async getById(req, res, next) {
     try {
@@ -250,7 +324,7 @@ export class CredentialController {
           ],
         },
         include: {
-          student: { select: { id: true, name: true, email: true, walletAddress: true } },
+          student: { select: { id: true, name: true, walletAddress: true } },
           issuer: {
             select: {
               id: true,
@@ -260,7 +334,6 @@ export class CredentialController {
           },
           skills: { include: { skill: true } },
           blockchainAnchor: true,
-          verificationLogs: { take: 5, orderBy: { verifiedAt: 'desc' } },
         },
       });
 
@@ -294,7 +367,7 @@ export class CredentialController {
         throw new NotFoundError('Credential not found');
       }
 
-      const verifyUrl = `${req.protocol}://${req.get('host')}/verify/${credential.certificateNumber}`;
+      const verifyUrl = `${env.FRONTEND_URL}/verify/${credential.certificateNumber}`;
       const format = req.query.format || 'dataUrl';
 
       if (format === 'svg') {

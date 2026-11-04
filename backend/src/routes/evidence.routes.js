@@ -15,6 +15,11 @@ router.get('/my', authorize('STUDENT', 'ADMIN'), (req, res, next) =>
   evidenceController.getMyEvidence(req, res, next)
 );
 
+// Authenticated, protected evidence download
+router.get('/:id/download', (req, res, next) =>
+  evidenceController.downloadEvidence(req, res, next)
+);
+
 router.patch('/:id/review', authorize('INSTITUTION', 'ADMIN'), (req, res, next) =>
   evidenceController.review(req, res, next)
 );

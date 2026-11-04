@@ -100,7 +100,7 @@ export class AdminController {
   }
 
   /**
-   * Update institution accreditation
+   * Update institution accreditation (Admin only)
    */
   async updateAccreditation(req, res, next) {
     try {
@@ -139,7 +139,53 @@ export class AdminController {
 
       res.status(200).json({
         success: true,
-        message: `Institution accreditation updated to ${isAccredited ? 'ACTIVE' : 'SUSPENDED'}`,
+        message: `Institution accreditation updated to ${isAccredited ? 'APPROVED' : 'SUSPENDED'}`,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Update employer verification (Admin only)
+   */
+  async updateEmployerVerification(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { isVerifiedCompany } = req.body;
+
+      const profile = await prisma.employerProfile.findFirst({
+        where: {
+          OR: [{ id }, { userId: id }],
+        },
+      });
+
+      if (!profile) {
+        throw new NotFoundError('Employer profile not found');
+      }
+
+      const updated = await prisma.employerProfile.update({
+        where: { id: profile.id },
+        data: {
+          isVerifiedCompany: Boolean(isVerifiedCompany),
+        },
+      });
+
+      // Audit log
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user.id,
+          action: isVerifiedCompany ? 'INSTITUTION_ACCREDITED' : 'INSTITUTION_SUSPENDED',
+          entity: 'EMPLOYER',
+          entityId: profile.id,
+          details: { isVerifiedCompany },
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: `Employer company verification status updated to ${isVerifiedCompany ? 'VERIFIED' : 'PENDING'}`,
         data: updated,
       });
     } catch (error) {

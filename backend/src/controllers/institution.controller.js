@@ -1,6 +1,13 @@
 import { prisma } from '../config/database.js';
-import { BadRequestError } from '../utils/errors.js';
-import { computeSha256, generateCertificateNumber, generateDigitalSignature, computeMerkleRoot } from '../utils/crypto.js';
+import { BadRequestError, ForbiddenError } from '../utils/errors.js';
+import {
+  computeSha256,
+  generateCertificateNumber,
+  normalizeCredentialPayload,
+  signCredentialPayload,
+  computeMerkleRoot,
+} from '../utils/crypto.js';
+import { env } from '../config/env.js';
 
 export class InstitutionController {
   /**
@@ -58,7 +65,7 @@ export class InstitutionController {
         prisma.credential.findMany({
           where,
           include: {
-            student: { select: { id: true, name: true, email: true, walletAddress: true } },
+            student: { select: { id: true, name: true, walletAddress: true } },
             skills: { include: { skill: true } },
             blockchainAnchor: true,
           },
@@ -94,9 +101,26 @@ export class InstitutionController {
         throw new BadRequestError('Items array of credentials is required');
       }
 
+      // Check accreditation
+      const isAccredited = req.user.role === 'ADMIN' || Boolean(req.user.rawUser?.institutionProfile?.isAccredited);
+      if (!isAccredited) {
+        throw new ForbiddenError('Only accredited institutions are authorized to issue credentials');
+      }
+
+      // Retrieve institutional signing key
+      const signingKey =
+        req.user.rawUser?.institutionProfile?.signingPrivateKey ||
+        process.env.INSTITUTION_SIGNING_KEY ||
+        env.BLOCKCHAIN_PRIVATE_KEY;
+
+      if (!signingKey || signingKey.length < 64) {
+        throw new BadRequestError(
+          'Institutional ECDSA private signing key is not configured. Cannot generate genuine cryptographic signature.'
+        );
+      }
+
       const created = [];
       for (const item of items) {
-        // Resolve student by email or ID
         let student = await prisma.user.findFirst({
           where: {
             OR: [
@@ -107,7 +131,6 @@ export class InstitutionController {
         });
 
         if (!student) {
-          // If student doesn't exist, create student placeholder
           student = await prisma.user.create({
             data: {
               email: item.studentEmail.toLowerCase(),
@@ -123,9 +146,27 @@ export class InstitutionController {
           });
         }
 
+        if (student.role !== 'STUDENT') {
+          continue; // Skip non-student targets
+        }
+
         const certNum = generateCertificateNumber('INST', item.courseCode || 'GEN');
-        const credHash = computeSha256(`${certNum}:${student.id}:${issuerId}:${Date.now()}`);
-        const signature = generateDigitalSignature(credHash);
+        const issuedDate = new Date();
+
+        const normalizedPayload = normalizeCredentialPayload({
+          certificateNumber: certNum,
+          studentId: student.id,
+          issuerId,
+          title: item.title,
+          type: item.type || 'CERTIFICATE',
+          badgeLevel: item.badgeLevel || 'BRONZE',
+          grade: item.grade || 'Pass',
+          courseCode: item.courseCode,
+          issuedAt: issuedDate,
+        });
+
+        const credHash = computeSha256(normalizedPayload);
+        const { signature } = await signCredentialPayload(normalizedPayload, signingKey);
 
         const cred = await prisma.credential.create({
           data: {
@@ -138,10 +179,23 @@ export class InstitutionController {
             badgeLevel: item.badgeLevel || 'BRONZE',
             grade: item.grade || 'Pass',
             courseCode: item.courseCode,
+            issuedAt: issuedDate,
             credentialHash: credHash,
             digitalSignature: signature,
             merkleRoot: computeMerkleRoot([credHash]),
-            qrCodeUrl: `/api/v1/credentials/qr/${certNum}`,
+            qrCodeUrl: `${env.FRONTEND_URL}/verify/${certNum}`,
+            blockchainAnchor: {
+              create: {
+                network: 'Ethereum Sepolia',
+                contractAddress: null,
+                transactionHash: null,
+                blockNumber: null,
+                merkleRoot: computeMerkleRoot([credHash]),
+                merkleProof: [credHash],
+                isConfirmed: false,
+                status: 'PENDING_BLOCKCHAIN',
+              },
+            },
           },
         });
 
@@ -166,7 +220,7 @@ export class InstitutionController {
       const evidence = await prisma.evidence.findMany({
         where: { status: 'PENDING_REVIEW' },
         include: {
-          student: { select: { id: true, name: true, email: true } },
+          student: { select: { id: true, name: true } },
           skills: { include: { skill: true } },
         },
         orderBy: { createdAt: 'desc' },

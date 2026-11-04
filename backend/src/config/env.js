@@ -19,10 +19,15 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().min(1, 'GROQ_API_KEY is required'),
   GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
   FRONTEND_URL: z.string().default('http://localhost:3000'),
+  ALLOWED_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173'),
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_FILE_SIZE_MB: z.string().default('10').transform((val) => parseInt(val, 10)),
   RATE_LIMIT_WINDOW_MS: z.string().default('900000').transform((val) => parseInt(val, 10)),
   RATE_LIMIT_MAX: z.string().default('100').transform((val) => parseInt(val, 10)),
+  BLOCKCHAIN_RPC_URL: z.string().optional().default('https://rpc.sepolia.org'),
+  BLOCKCHAIN_PRIVATE_KEY: z.string().optional().default(''),
+  CONTRACT_ADDRESS: z.string().optional().default(''),
+  CHAIN_ID: z.string().default('11155111').transform((val) => parseInt(val, 10)),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

@@ -1,11 +1,11 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { env } from './env.js';
 
 const uploadDirectory = path.resolve(env.UPLOAD_DIR, 'evidence');
 
-// Ensure directory exists
 if (!fs.existsSync(uploadDirectory)) {
   fs.mkdirSync(uploadDirectory, { recursive: true });
 }
@@ -15,24 +15,28 @@ const storage = multer.diskStorage({
     cb(null, uploadDirectory);
   },
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const sanitized = file.originalname.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
-    cb(null, `${Date.now()}-${sanitized}${ext}`);
+    // Generate secure random UUID filename to completely prevent path traversal and collision
+    const ext = path.extname(file.originalname).toLowerCase();
+    const secureId = crypto.randomUUID();
+    cb(null, `${secureId}${ext}`);
   },
 });
 
 const fileFilter = (_req, file, cb) => {
+  const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  const ext = path.extname(file.originalname).toLowerCase();
+
   const allowedMimes = [
     'application/pdf',
     'image/jpeg',
     'image/png',
     'image/webp',
-    'text/plain',
   ];
-  if (allowedMimes.includes(file.mimetype)) {
+
+  if (allowedExtensions.includes(ext) && allowedMimes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Invalid file format. Only PDF, PNG, JPG, and text files are permitted.'), false);
+    cb(new Error('Invalid file type. Only PDF and image documents (PNG, JPEG, WEBP) are allowed.'), false);
   }
 };
 

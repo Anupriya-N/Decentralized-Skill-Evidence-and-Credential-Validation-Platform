@@ -12,6 +12,9 @@ router.get('/users', (req, res, next) => adminController.getUsers(req, res, next
 router.patch('/institutions/:id/accreditation', (req, res, next) =>
   adminController.updateAccreditation(req, res, next)
 );
+router.patch('/employers/:id/verification', (req, res, next) =>
+  adminController.updateEmployerVerification(req, res, next)
+);
 router.get('/audit-logs', (req, res, next) => adminController.getAuditLogs(req, res, next));
 
 export default router;

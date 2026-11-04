@@ -215,8 +215,9 @@ model InstitutionProfile {
   institutionName      String
   accreditationBody    String?
   accreditationNumber  String?
-  isAccredited         Boolean     @default(true)
+  isAccredited         Boolean     @default(false)
   signingPublicKey     String?
+  signingPrivateKey    String?
   officialDomain       String?
   logoUrl              String?
   contactEmail         String?
@@ -237,7 +238,7 @@ model EmployerProfile {
   companySize          String?
   website              String?
   contactPhone         String?
-  isVerifiedCompany    Boolean     @default(true)
+  isVerifiedCompany    Boolean     @default(false)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 
@@ -306,6 +307,7 @@ model Evidence {
   externalUrl     String?
   extractedSkills Json?
   aiConfidence    Float?
+  aiStatus        String           @default("AI_PENDING")
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -429,14 +431,15 @@ model BlockchainAnchor {
   credentialId        String      @unique
   credential          Credential  @relation(fields: [credentialId], references: [id], onDelete: Cascade)
   network             String      @default("Ethereum Sepolia")
-  contractAddress     String
-  transactionHash     String      @unique
-  blockNumber         BigInt
-  merkleRoot          String
-  merkleProof         Json
+  contractAddress     String?
+  transactionHash     String?     @unique
+  blockNumber         BigInt?
+  merkleRoot          String?
+  merkleProof         Json?
   timestamp           DateTime    @default(now())
   gasUsed             BigInt?
-  isConfirmed         Boolean     @default(true)
+  isConfirmed         Boolean     @default(false)
+  status              String      @default("PENDING_BLOCKCHAIN")
 
   @@index([transactionHash])
   @@index([contractAddress])

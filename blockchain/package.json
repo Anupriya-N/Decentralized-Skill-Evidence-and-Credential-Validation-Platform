@@ -1,0 +1,16 @@
+{
+  "name": "certitrust-blockchain",
+  "version": "1.0.0",
+  "description": "CertiTrust Solidity Smart Contracts & Hardhat Environment",
+  "main": "hardhat.config.cjs",
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:sepolia": "npx hardhat run scripts/deploy.js --network sepolia",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.15"
+  }
+}
