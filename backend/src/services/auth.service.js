@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
-import { BadRequestError, UnauthorizedError, ConflictError, ForbiddenError } from '../utils/errors.js';
+import { BadRequestError, UnauthorizedError, ConflictError, ForbiddenError, NotFoundError } from '../utils/errors.js';
 import { normalizeRole } from '../middleware/auth.middleware.js';
 import crypto from 'crypto';
 
@@ -82,6 +82,19 @@ export class AuthService {
           entity: 'USER',
           entityId: newUser.id,
           details: { email: newUser.email, role: newUser.role, pendingApproval: normalizedRole !== 'STUDENT' },
+        },
+      });
+
+      // Welcome Notification
+      await tx.notification.create({
+        data: {
+          userId: newUser.id,
+          type: 'SYSTEM_NOTICE',
+          title: 'Welcome to CertiTrust',
+          message:
+            normalizedRole === 'STUDENT'
+              ? 'Welcome to CertiTrust! You can now upload evidence of skills and view your verified portfolio.'
+              : 'Welcome to CertiTrust! Your profile has been submitted and is pending administrator accreditation review.',
         },
       });
 
@@ -257,6 +270,177 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * Request password reset instructions
+   */
+  async requestPasswordReset(email) {
+    if (!email) {
+      throw new BadRequestError('Email address is required');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (!user || !user.isActive) {
+      // Prevent account enumeration by returning identical success response
+      return {
+        message: 'If an account exists with this email, password reset instructions have been issued.',
+      };
+    }
+
+    const resetToken = jwt.sign(
+      { userId: user.id, type: 'password_reset' },
+      env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'PASSWORD_RESET',
+        entity: 'USER',
+        entityId: user.id,
+        details: { step: 'REQUEST_INITIATED' },
+      },
+    });
+
+    return {
+      message: 'If an account exists with this email, password reset instructions have been issued.',
+      resetToken: env.NODE_ENV !== 'production' ? resetToken : undefined,
+    };
+  }
+
+  /**
+   * Complete password reset using valid reset token
+   */
+  async resetPassword({ resetToken, newPassword }) {
+    if (!resetToken || !newPassword) {
+      throw new BadRequestError('Reset token and new password are required');
+    }
+
+    if (newPassword.length < 6) {
+      throw new BadRequestError('New password must be at least 6 characters');
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, env.JWT_SECRET);
+    } catch (err) {
+      throw new UnauthorizedError('Invalid or expired password reset token');
+    }
+
+    if (decoded.type !== 'password_reset' || !decoded.userId) {
+      throw new UnauthorizedError('Invalid password reset token payload');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+    });
+
+    if (!user || !user.isActive) {
+      throw new NotFoundError('User not found or account inactive');
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newPasswordHash },
+      });
+
+      // Revoke all existing refresh tokens for security
+      await tx.refreshToken.updateMany({
+        where: { userId: user.id },
+        data: { isRevoked: true },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'PASSWORD_RESET',
+          entity: 'USER',
+          entityId: user.id,
+          details: { step: 'RESET_COMPLETED' },
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId: user.id,
+          type: 'SECURITY_ALERT',
+          title: 'Password Changed',
+          message: 'Your account password has been successfully reset. If you did not make this change, contact support immediately.',
+        },
+      });
+    });
+
+    return { message: 'Password has been successfully reset. Please log in with your new credentials.' };
+  }
+
+  /**
+   * Authenticated user change password
+   */
+  async changePassword({ userId, currentPassword, newPassword }) {
+    if (!currentPassword || !newPassword) {
+      throw new BadRequestError('Current password and new password are required');
+    }
+
+    if (newPassword.length < 6) {
+      throw new BadRequestError('New password must be at least 6 characters');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedError('Incorrect current password');
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newPasswordHash },
+      });
+
+      // Revoke all existing refresh tokens
+      await tx.refreshToken.updateMany({
+        where: { userId: user.id },
+        data: { isRevoked: true },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'PASSWORD_RESET',
+          entity: 'USER',
+          entityId: user.id,
+          details: { step: 'PASSWORD_CHANGED' },
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId: user.id,
+          type: 'SECURITY_ALERT',
+          title: 'Password Updated',
+          message: 'Your account password was updated successfully.',
+        },
+      });
+    });
+
+    return { message: 'Password updated successfully' };
   }
 
   /**

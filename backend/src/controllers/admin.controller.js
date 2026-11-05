@@ -137,6 +137,18 @@ export class AdminController {
         },
       });
 
+      // Notify institution
+      await prisma.notification.create({
+        data: {
+          userId: profile.userId,
+          type: 'ACCREDITATION_UPDATED',
+          title: isAccredited ? 'Accreditation Approved' : 'Accreditation Status Updated',
+          message: isAccredited
+            ? 'Your institution has been officially accredited. You may now cryptographically issue verifiable credentials.'
+            : 'Your institution accreditation status has been suspended or updated by platform administrators.',
+        },
+      });
+
       res.status(200).json({
         success: true,
         message: `Institution accreditation updated to ${isAccredited ? 'APPROVED' : 'SUSPENDED'}`,
@@ -180,6 +192,18 @@ export class AdminController {
           entity: 'EMPLOYER',
           entityId: profile.id,
           details: { isVerifiedCompany },
+        },
+      });
+
+      // Notify employer
+      await prisma.notification.create({
+        data: {
+          userId: profile.userId,
+          type: 'ACCREDITATION_UPDATED',
+          title: isVerifiedCompany ? 'Employer Verification Approved' : 'Employer Status Updated',
+          message: isVerifiedCompany
+            ? 'Your employer organization has been verified. You may now access candidate profiles and search talent pool.'
+            : 'Your employer organization verification status has been updated by administrators.',
         },
       });
 

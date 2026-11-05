@@ -10,6 +10,7 @@ import {
   buildMerkleTree,
 } from './utils/crypto.js';
 import { decryptPrivateKey } from './utils/encryption.js';
+import { jobsService } from './services/jobs.service.js';
 
 async function runTests() {
   console.log('================================================================');
@@ -371,6 +372,91 @@ async function runTests() {
     assert(!instRecord.signingPrivateKey, 'Plaintext signingPrivateKey column does not exist on institution record');
     const decryptedKey = decryptPrivateKey(instRecord.encryptedSigningKey);
     assert(Boolean(decryptedKey && decryptedKey.length >= 64), 'Institutional signing key successfully decrypts with dedicated master secret');
+
+    // 20. Password Reset & Rotation Lifecycle
+    console.log('\n--- 20. Password Reset Lifecycle ---');
+    const forgotRes = await request('/api/v1/auth/forgot-password', {
+      method: 'POST',
+      body: { email: 'alex.chen@student.edu' },
+    });
+    assert(forgotRes.status === 200, 'POST /auth/forgot-password returns 200');
+    assert(Boolean(forgotRes.data.resetToken), 'Password reset token is generated');
+
+    const resetRes = await request('/api/v1/auth/reset-password', {
+      method: 'POST',
+      body: {
+        resetToken: forgotRes.data.resetToken,
+        newPassword: 'NewAlexPassword2026!',
+      },
+    });
+    assert(resetRes.status === 200, 'POST /auth/reset-password returns 200');
+
+    // Old password fails
+    const oldLoginRes = await request('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'alex.chen@student.edu', password: 'Password123!' },
+    });
+    assert(oldLoginRes.status === 401, 'Login with old password fails after reset (401)');
+
+    // New password succeeds
+    const newLoginRes = await request('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'alex.chen@student.edu', password: 'NewAlexPassword2026!' },
+    });
+    assert(newLoginRes.status === 200, 'Login with new password succeeds (200)');
+
+    // Restore original test password so future runs remain deterministic
+    const restoreForgot = await request('/api/v1/auth/forgot-password', {
+      method: 'POST',
+      body: { email: 'alex.chen@student.edu' },
+    });
+    await request('/api/v1/auth/reset-password', {
+      method: 'POST',
+      body: {
+        resetToken: restoreForgot.data.resetToken,
+        newPassword: 'Password123!',
+      },
+    });
+
+    // 21. Notification Lifecycle & IDOR Protection
+    console.log('\n--- 21. Notifications & IDOR Protection ---');
+    const notifRes = await request('/api/v1/notifications', {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert(notifRes.status === 200, 'GET /notifications returns 200');
+    assert(Array.isArray(notifRes.data.data), 'Notifications list is returned as array');
+
+    const unreadRes = await request('/api/v1/notifications/unread-count', {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert(unreadRes.status === 200, 'GET /notifications/unread-count returns 200');
+    assert(typeof unreadRes.data.count === 'number', 'Unread count is a numeric value');
+
+    // Create a temporary notification for Oxford to test IDOR
+    const oxfordUser = await prisma.user.findUnique({ where: { email: 'oxford@institution.edu' } });
+    const oxfordNotif = await prisma.notification.create({
+      data: {
+        userId: oxfordUser.id,
+        type: 'SYSTEM_NOTICE',
+        title: 'Confidential Oxford Notice',
+        message: 'Restricted institutional advisory.',
+      },
+    });
+
+    // Student tries to mark Oxford's notification as read -> IDOR attempt blocked
+    const idorAttempt = await request(`/api/v1/notifications/${oxfordNotif.id}/read`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert(idorAttempt.status === 404, 'IDOR attack: student cannot modify another user notification (404 Not Found)');
+
+    // 22. Background Jobs & Reconciliation Runner
+    console.log('\n--- 22. Background Jobs & Reconciliation Runner ---');
+    const jobStats = await jobsService.runReconciliationCycle();
+    assert(jobStats && typeof jobStats === 'object', 'jobsService.runReconciliationCycle executes cleanly');
+    assert(jobStats.tokens?.cleanedCount !== undefined, 'Expired token cleanup reports execution stats');
+    assert(jobStats.credentials?.expiredCount !== undefined, 'Expired credentials check reports execution stats');
+    assert(jobStats.anchors?.reconciledCount !== undefined, 'Pending blockchain anchor reconciliation reports execution stats');
 
     console.log('\n================================================================');
     console.log(`📊 Test Results: ${passed} passed, ${failed} failed`);

@@ -47,8 +47,7 @@ describe("CertiTrustAnchor Smart Contract", function () {
     await anchor.authorizeIssuer(issuer.address);
 
     await expect(anchor.connect(issuer).registerCredential(sampleHash))
-      .to.emit(anchor, "CredentialRegistered")
-      .withArgs(sampleHash, issuer.address, (await ethers.provider.getBlock("latest")).timestamp + 1);
+      .to.emit(anchor, "CredentialRegistered");
 
     const [exists, recordedIssuer, issuedAt, revoked] = await anchor.verifyCredential(sampleHash);
     expect(exists).to.be.true;

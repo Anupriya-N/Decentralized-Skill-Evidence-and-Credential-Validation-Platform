@@ -141,6 +141,17 @@ export class EvidenceController {
         },
       });
 
+      // Notification
+      await prisma.notification.create({
+        data: {
+          userId: studentId,
+          type: 'SYSTEM_NOTICE',
+          title: 'Evidence Uploaded',
+          message: `Your evidence "${evidence.title}" has been uploaded and queued for institutional review.`,
+          actionUrl: '/student/evidence',
+        },
+      });
+
       res.status(201).json({
         success: true,
         message: 'Evidence document uploaded, verified via magic bytes, and processed for review',
@@ -298,6 +309,16 @@ export class EvidenceController {
             type: 'EVIDENCE_APPROVED',
             title: 'Evidence Verified & Approved',
             message: `Your evidence "${evidence.title}" has been verified.`,
+            actionUrl: '/student/evidence',
+          },
+        });
+      } else if (status === 'REJECTED') {
+        await prisma.notification.create({
+          data: {
+            userId: evidence.studentId,
+            type: 'EVIDENCE_REJECTED',
+            title: 'Evidence Submission Rejected',
+            message: `Your evidence "${evidence.title}" was not approved. Feedback: ${feedback || 'Does not satisfy accreditation criteria.'}`,
             actionUrl: '/student/evidence',
           },
         });
