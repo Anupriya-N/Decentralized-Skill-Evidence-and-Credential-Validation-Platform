@@ -92,7 +92,15 @@ async function main() {
 
   const oxfordUser = await prisma.user.upsert({
     where: { email: 'oxford@institution.edu' },
-    update: {}, // Safe upsert: preserve existing accreditation and profile
+    update: {
+      walletAddress: demoOxfordWallet.address,
+      institutionProfile: {
+        update: {
+          encryptedSigningKey: encryptedOxfordKey,
+          signingPublicKey: demoOxfordWallet.address,
+        },
+      },
+    }, // Safe upsert: preserve existing accreditation and profile while updating key encrypted with current secret
     create: {
       email: 'oxford@institution.edu',
       passwordHash: standardPasswordHash,

@@ -252,6 +252,9 @@ export class InstitutionController {
               },
             },
           },
+          include: {
+            blockchainAnchor: true,
+          },
         });
 
         created.push(cred);

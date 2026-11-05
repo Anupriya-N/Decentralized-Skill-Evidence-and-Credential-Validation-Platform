@@ -24,6 +24,7 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.string().default('10').transform((val) => parseInt(val, 10)),
   RATE_LIMIT_WINDOW_MS: z.string().default('900000').transform((val) => parseInt(val, 10)),
   RATE_LIMIT_MAX: z.string().default('100').transform((val) => parseInt(val, 10)),
+  INSTITUTION_KEY_ENCRYPTION_SECRET: z.string().min(32, 'INSTITUTION_KEY_ENCRYPTION_SECRET must be at least 32 characters'),
   BLOCKCHAIN_RPC_URL: z.string().optional().default('https://rpc.sepolia.org'),
   BLOCKCHAIN_PRIVATE_KEY: z.string().optional().default(''),
   CONTRACT_ADDRESS: z.string().optional().default(''),

@@ -111,7 +111,114 @@ export class BlockchainService {
   }
 
   /**
-   * Anchors credential hash on-chain.
+   * Reads current institutional nonce from smart contract for EIP-712 replay protection
+   */
+  async getNonce(issuerAddress) {
+    await this.ensureInitialized();
+    if (!this.provider || !env.CONTRACT_ADDRESS || !ethers.isAddress(env.CONTRACT_ADDRESS)) {
+      return 0;
+    }
+    try {
+      const readContract = new ethers.Contract(env.CONTRACT_ADDRESS, CertiTrustAnchorABI, this.provider);
+      const nonce = await readContract.nonces(issuerAddress);
+      return Number(nonce);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Anchors credential hash on-chain using institutional EIP-712 authorization signature.
+   * Enables platform relayer to execute transaction while recording verified institution as issuer.
+   */
+  async anchorCredentialWithSignature(credentialHash, issuerAddress, nonce, deadline, signature) {
+    await this.ensureInitialized();
+
+    if (!validateBytes32Hash(credentialHash)) {
+      return {
+        isConfirmed: false,
+        status: 'INVALID_HASH_FORMAT',
+        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
+        transactionHash: null,
+        blockNumber: null,
+        contractAddress: null,
+      };
+    }
+
+    if (!this.isConfigured || !this.contract) {
+      return {
+        isConfirmed: false,
+        status: 'PENDING_BLOCKCHAIN',
+        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
+        transactionHash: null,
+        blockNumber: null,
+        contractAddress: null,
+      };
+    }
+
+    try {
+      const network = await this.provider.getNetwork();
+      if (Number(network.chainId) !== env.CHAIN_ID) {
+        return {
+          isConfirmed: false,
+          status: 'CHAIN_MISMATCH',
+          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          transactionHash: null,
+          blockNumber: null,
+          contractAddress: null,
+        };
+      }
+
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+
+      const tx = await this.contract.registerCredentialWithSignature(
+        formattedHash,
+        issuerAddress,
+        nonce,
+        deadline,
+        signature
+      );
+      const receipt = await tx.wait(1);
+
+      if (!receipt || receipt.status !== 1) {
+        return {
+          isConfirmed: false,
+          status: 'FAILED',
+          reason: 'Blockchain transaction reverted or receipt status failed',
+          transactionHash: receipt?.hash || null,
+          blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+        };
+      }
+
+      // Read back to confirm state and verify issuer identity matches
+      const [exists, onChainIssuer, , revoked] = await this.contract.verifyCredential(formattedHash);
+      const isIssuerMatch = onChainIssuer.toLowerCase() === issuerAddress.toLowerCase();
+      const isConfirmed = exists && !revoked && isIssuerMatch;
+
+      return {
+        isConfirmed,
+        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
+        transactionHash: receipt.hash,
+        blockNumber: BigInt(receipt.blockNumber),
+        gasUsed: BigInt(receipt.gasUsed || 0),
+        network: 'Ethereum Sepolia',
+        contractAddress: env.CONTRACT_ADDRESS,
+        issuer: onChainIssuer,
+      };
+    } catch (error) {
+      return {
+        isConfirmed: false,
+        status: 'FAILED',
+        reason: error.message,
+        transactionHash: null,
+        blockNumber: null,
+        contractAddress: null,
+      };
+    }
+  }
+
+  /**
+   * Anchors credential hash on-chain directly.
    * Strictly validates 32-byte hex hash.
    * Stores NULL transaction values for pending operations - NEVER fabricates hashes.
    */
@@ -267,7 +374,43 @@ export class BlockchainService {
   }
 
   /**
-   * Revoke on-chain credential
+   * Revoke on-chain credential using institutional EIP-712 revocation signature
+   */
+  async revokeOnChainWithSignature(credentialHash, issuerAddress, nonce, deadline, signature) {
+    await this.ensureInitialized();
+
+    if (!validateBytes32Hash(credentialHash)) {
+      return { success: false, reason: 'Invalid credential hash format' };
+    }
+
+    if (!this.isConfigured || !this.contract) {
+      return { success: false, reason: 'Blockchain relayer wallet or contract not configured' };
+    }
+
+    try {
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+
+      const tx = await this.contract.revokeCredentialWithSignature(
+        formattedHash,
+        issuerAddress,
+        nonce,
+        deadline,
+        signature
+      );
+      const receipt = await tx.wait(1);
+
+      return {
+        success: receipt.status === 1,
+        transactionHash: receipt.hash,
+        blockNumber: BigInt(receipt.blockNumber),
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Revoke on-chain credential directly
    */
   async revokeOnChain(credentialHash) {
     await this.ensureInitialized();

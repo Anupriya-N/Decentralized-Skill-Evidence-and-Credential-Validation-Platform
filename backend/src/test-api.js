@@ -3,10 +3,17 @@ import fs from 'fs';
 import path from 'path';
 import { app } from './app.js';
 import { connectDatabase, prisma } from './config/database.js';
+import {
+  normalizeCredentialPayload,
+  verifyCredentialSignature,
+  verifyMerkleProof,
+  buildMerkleTree,
+} from './utils/crypto.js';
+import { decryptPrivateKey } from './utils/encryption.js';
 
 async function runTests() {
   console.log('================================================================');
-  console.log('🧪 Starting CertiTrust Backend_03 Comprehensive Test Suite');
+  console.log('🧪 Starting CertiTrust Backend_05 Comprehensive Test Suite');
   console.log('================================================================');
 
   await connectDatabase();
@@ -76,6 +83,7 @@ async function runTests() {
     assert(studentLogin.status === 200, 'Student login succeeds');
     const studentToken = studentLogin.data.data?.accessToken;
     const refreshToken = studentLogin.data.data?.refreshToken;
+    const alexChenUserId = studentLogin.data.data?.user?.id;
     assert(Boolean(studentToken), 'JWT access token received');
 
     // 4. Atomic Refresh Token Rotation
@@ -139,6 +147,10 @@ async function runTests() {
     });
     assert(oxfordLogin.status === 200, 'Oxford login succeeds');
     const oxfordToken = oxfordLogin.data.data?.accessToken;
+    const oxfordUserId = oxfordLogin.data.data?.user?.id;
+    const oxfordWalletAddress =
+      oxfordLogin.data.data?.user?.walletAddress ||
+      oxfordLogin.data.data?.user?.institutionProfile?.signingPublicKey;
 
     const nonStudentIssue = await request('/api/v1/credentials', {
       method: 'POST',
@@ -205,9 +217,9 @@ async function runTests() {
 
     // 12. File Upload Magic Bytes Validation
     console.log('\n--- 12. File Upload Magic Bytes Security ---');
-    // Create valid PDF file with %PDF- header
+    // Create valid PDF file with %PDF- header and unique nonce to prevent duplicate detection
     const validPdfPath = path.resolve('test_valid.pdf');
-    fs.writeFileSync(validPdfPath, Buffer.from('%PDF-1.4\nTest PDF content with genuine header\n%%EOF'));
+    fs.writeFileSync(validPdfPath, Buffer.from(`%PDF-1.4\nTest PDF content with genuine header ${Date.now()}\n%%EOF`));
 
     // Create fake PDF file (executable / text with wrong header)
     const fakePdfPath = path.resolve('test_fake.pdf');
@@ -262,6 +274,103 @@ async function runTests() {
       },
     });
     assert(aiChat.status === 200 && aiChat.data.data?.content?.length > 20, 'Groq AI Advisor conversational chat responds with meaningful advice');
+
+    // 14. Tampered Credential Rejection Test
+    console.log('\n--- 14. Tampered Credential Rejection ---');
+    const tamperedPayload = normalizeCredentialPayload({
+      certificateNumber: newCertNum,
+      studentId: alexChenUserId,
+      issuerId: oxfordUserId,
+      title: 'TAMPERED: Master of Science in Distributed Computing',
+      type: 'DEGREE',
+      badgeLevel: 'GOLD',
+      grade: 'First Class Honours (Hacked)',
+      courseCode: 'CS-901',
+      issuedAt: validIssue.data.data.issuedAt,
+    });
+    const isTamperedSigValid = verifyCredentialSignature(
+      tamperedPayload,
+      validIssue.data.data.digitalSignature,
+      oxfordWalletAddress
+    );
+    assert(isTamperedSigValid.isValid === false, 'Tampered credential payload is strictly rejected by ECDSA signature check');
+
+    // 15. Credential Revocation Reconciliation Test
+    console.log('\n--- 15. Revocation Reconciliation ---');
+    const reconcileRes = await request(`/api/v1/credentials/${validIssue.data.data.id}/reconcile-revocation`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+    });
+    assert(reconcileRes.status === 200 || reconcileRes.status === 503, 'POST /reconcile-revocation responds with structured status');
+    assert(reconcileRes.data.success !== undefined, 'Reconciliation returns structured success indicator');
+
+    // 16. Merkle Tree Batch Credential Issuance & Sibling Proof Verification
+    console.log('\n--- 16. Merkle Tree Batch Issuance & Sibling Proofs ---');
+    const batchRes = await request('/api/v1/institutions/batch-issue', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        items: [
+          {
+            studentEmail: 'alex.chen@student.edu',
+            title: 'Advanced Zero-Knowledge Proofs',
+            type: 'CERTIFICATE',
+            badgeLevel: 'SILVER',
+            grade: 'Pass',
+            courseCode: 'ZK-101',
+          },
+          {
+            studentEmail: `batch.student.${Date.now()}@student.edu`,
+            studentName: 'Batch Candidate 2',
+            title: 'Decentralized Consensus Protocols',
+            type: 'CERTIFICATE',
+            badgeLevel: 'GOLD',
+            grade: 'Distinction',
+            courseCode: 'CONS-201',
+          },
+        ],
+      },
+    });
+    assert(batchRes.status === 201, 'POST /institutions/batch-issue returns 201 Created');
+    assert(batchRes.data.data?.count === 2, 'Batch issue created 2 credentials');
+    const batchRoot = batchRes.data.data?.batchMerkleRoot;
+    assert(Boolean(batchRoot), 'Batch Merkle root is calculated and returned');
+
+    for (const cred of batchRes.data.data?.credentials || []) {
+      const proof = cred.blockchainAnchor?.merkleProof || [];
+      const proofValid = verifyMerkleProof(cred.credentialHash, proof, batchRoot);
+      assert(proofValid === true, `Merkle sibling proof path mathematically verifies for ${cred.certificateNumber}`);
+
+      // Verify tampered proof fails
+      const tamperedProof = ['0x' + '00'.repeat(32), ...proof.slice(1)];
+      const tamperedProofValid = verifyMerkleProof(cred.credentialHash, tamperedProof, batchRoot);
+      assert(tamperedProofValid === false, `Tampered Merkle proof is correctly rejected for ${cred.certificateNumber}`);
+    }
+
+    // 17. QR Code Verification Endpoint
+    console.log('\n--- 17. QR Code Generation & Verification ---');
+    const qrRes = await request(`/api/v1/credentials/qr/${newCertNum}`);
+    assert(qrRes.status === 200, 'GET /credentials/qr/:id returns 200');
+    assert(qrRes.data.success === true, 'QR endpoint reports success=true');
+
+    // 18. Groq AI Error Handling Test
+    console.log('\n--- 18. Groq AI Error Handling ---');
+    const aiInvalid = await request('/api/v1/ai/extract-skills', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${studentToken}` },
+      body: {}, // Missing text
+    });
+    assert(aiInvalid.status === 400, 'POST /ai/extract-skills with empty text returns 400 Bad Request');
+
+    // 19. Institutional Key Encryption at Rest Test
+    console.log('\n--- 19. Institutional Key Encryption at Rest ---');
+    const instRecord = await prisma.institutionProfile.findFirst({
+      where: { user: { email: 'oxford@institution.edu' } },
+    });
+    assert(Boolean(instRecord.encryptedSigningKey), 'Institutional signing key is stored encrypted in database');
+    assert(!instRecord.signingPrivateKey, 'Plaintext signingPrivateKey column does not exist on institution record');
+    const decryptedKey = decryptPrivateKey(instRecord.encryptedSigningKey);
+    assert(Boolean(decryptedKey && decryptedKey.length >= 64), 'Institutional signing key successfully decrypts with dedicated master secret');
 
     console.log('\n================================================================');
     console.log(`📊 Test Results: ${passed} passed, ${failed} failed`);

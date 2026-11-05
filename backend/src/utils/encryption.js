@@ -5,7 +5,12 @@ const ALGORITHM = 'aes-256-gcm';
 const SALT = 'certitrust-institutional-key-salt-v1';
 
 function getMasterKey() {
-  const secret = process.env.INSTITUTION_KEY_ENCRYPTION_SECRET || env.JWT_SECRET;
+  const secret = process.env.INSTITUTION_KEY_ENCRYPTION_SECRET || env.INSTITUTION_KEY_ENCRYPTION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      'CRITICAL SECURITY ERROR: INSTITUTION_KEY_ENCRYPTION_SECRET must be configured and at least 32 characters long. Fallback to JWT_SECRET is strictly forbidden.'
+    );
+  }
   return crypto.scryptSync(secret, SALT, 32);
 }
 

@@ -9,8 +9,12 @@ export const CertiTrustAnchorABI = [
   "function authorizeIssuer(address issuer)",
   "function deauthorizeIssuer(address issuer)",
   "function authorizedIssuers(address) view returns (bool)",
+  "function nonces(address) view returns (uint256)",
+  "function DOMAIN_SEPARATOR() view returns (bytes32)",
   "function registerCredential(bytes32 credentialHash)",
+  "function registerCredentialWithSignature(bytes32 credentialHash, address issuer, uint256 nonce, uint256 deadline, bytes calldata signature)",
   "function revokeCredential(bytes32 credentialHash)",
+  "function revokeCredentialWithSignature(bytes32 credentialHash, address issuer, uint256 nonce, uint256 deadline, bytes calldata signature)",
   "function verifyCredential(bytes32 credentialHash) view returns (bool exists, address issuer, uint256 issuedAt, bool revoked)",
   "function credentials(bytes32) view returns (bytes32 credentialHash, address issuer, uint256 issuedAt, bool revoked, bool exists)"
 ];

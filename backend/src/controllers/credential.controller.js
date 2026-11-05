@@ -153,7 +153,7 @@ export class CredentialController {
               transactionHash: anchorResult.transactionHash,
               blockNumber: anchorResult.blockNumber,
               merkleRoot,
-              merkleProof: [credentialHash],
+              merkleProof: [],
               isConfirmed: anchorResult.isConfirmed,
               status: anchorResult.status,
             },
