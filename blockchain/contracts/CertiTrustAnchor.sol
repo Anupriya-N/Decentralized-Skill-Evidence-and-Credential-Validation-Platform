@@ -5,7 +5,7 @@ pragma solidity ^0.8.20;
  * @title CertiTrustAnchor
  * @notice Immutable cryptographic anchor for CertiTrust skill credentials on Ethereum Sepolia
  * @dev Implements EIP-712 typed signature verification allowing relayers to submit transactions
- *      on behalf of authorized institutions while strictly preserving institutional issuer identity.
+ *      on behalf of authorized institutions while strictly preserving inx`stitutional issuer identity.
  */
 contract CertiTrustAnchor {
     address public owner;
