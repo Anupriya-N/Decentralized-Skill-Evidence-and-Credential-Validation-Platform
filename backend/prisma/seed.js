@@ -1,13 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import { ethers } from 'ethers';
 import {
   normalizeCredentialPayload,
   computeSha256,
   signCredentialPayload,
-  computeMerkleRoot,
 } from '../src/utils/crypto.js';
+import { encryptPrivateKey } from '../src/utils/encryption.js';
 
 const prisma = new PrismaClient();
 
@@ -17,13 +16,18 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('--- Starting Safe Development Seeding for CertiTrust (Backend_03 Standards) ---');
+  console.log('--- Starting Safe Development Seeding for CertiTrust (Backend_04 Standards) ---');
 
   const standardPasswordHash = await bcrypt.hash('Password123!', 10);
-  const adminPasswordHash = await bcrypt.hash('AdminSecure2026!', 10);
+  const adminPasswordHash = await bcrypt.hash(process.env.DEV_ADMIN_PASSWORD || 'DevAdminPass2026!', 10);
 
-  // Demo institutional Ethereum wallet keypair
-  const demoOxfordWallet = new ethers.Wallet('0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d');
+  // Generate or load development wallet for Oxford demo institution
+  // In development, uses environment key if present or generates an ephemeral keypair
+  const demoOxfordWallet = process.env.DEMO_INSTITUTION_PRIVATE_KEY
+    ? new ethers.Wallet(process.env.DEMO_INSTITUTION_PRIVATE_KEY)
+    : ethers.Wallet.createRandom();
+
+  const encryptedOxfordKey = encryptPrivateKey(demoOxfordWallet.privateKey);
 
   // 1. Seed or Upsert Standardized Skills
   console.log('Seeding Standardized Skills...');
@@ -48,11 +52,11 @@ async function main() {
     });
   }
 
-  // 2. Seed Users safely with Upsert (Preserving existing approval statuses)
-  console.log('Seeding Demo Users...');
+  // 2. Seed Users safely with Upsert (Preserving existing approval statuses and roles)
+  console.log('Seeding Demo Development Users...');
   const alexUser = await prisma.user.upsert({
     where: { email: 'alex.chen@student.edu' },
-    update: { role: 'STUDENT' },
+    update: {}, // Safe upsert: never overwrite existing user data or roles
     create: {
       email: 'alex.chen@student.edu',
       passwordHash: standardPasswordHash,
@@ -88,16 +92,7 @@ async function main() {
 
   const oxfordUser = await prisma.user.upsert({
     where: { email: 'oxford@institution.edu' },
-    update: {
-      role: 'INSTITUTION',
-      walletAddress: demoOxfordWallet.address,
-      institutionProfile: {
-        update: {
-          signingPrivateKey: demoOxfordWallet.privateKey,
-          signingPublicKey: demoOxfordWallet.address,
-        },
-      },
-    },
+    update: {}, // Safe upsert: preserve existing accreditation and profile
     create: {
       email: 'oxford@institution.edu',
       passwordHash: standardPasswordHash,
@@ -113,7 +108,7 @@ async function main() {
           accreditationNumber: 'UK-HESA-98210',
           isAccredited: true,
           officialDomain: 'ox.ac.uk',
-          signingPrivateKey: demoOxfordWallet.privateKey,
+          encryptedSigningKey: encryptedOxfordKey,
           signingPublicKey: demoOxfordWallet.address,
           contactEmail: 'registry@ox.ac.uk',
           country: 'GB',
@@ -122,9 +117,9 @@ async function main() {
     },
   });
 
-  const recruiterUser = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { email: 'recruiter@techcorp.com' },
-    update: { role: 'EMPLOYER' },
+    update: {}, // Safe upsert: preserve existing employer verification
     create: {
       email: 'recruiter@techcorp.com',
       passwordHash: standardPasswordHash,
@@ -146,7 +141,7 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: 'admin@certitrust.io' },
-    update: { role: 'ADMIN' },
+    update: {}, // Safe upsert: never overwrite existing admin
     create: {
       email: 'admin@certitrust.io',
       passwordHash: adminPasswordHash,
@@ -175,17 +170,11 @@ async function main() {
   });
 
   const credentialHash = computeSha256(normalizedPayload);
-  const merkleRoot = computeMerkleRoot([credentialHash]);
   const { signature } = await signCredentialPayload(normalizedPayload, demoOxfordWallet.privateKey);
 
   await prisma.credential.upsert({
     where: { certificateNumber: certNumber },
-    update: {
-      credentialHash,
-      merkleRoot,
-      digitalSignature: signature,
-      status: 'ACTIVE',
-    },
+    update: {}, // Safe upsert: preserve credential status
     create: {
       certificateNumber: certNumber,
       studentId: alexUser.id,
@@ -199,17 +188,18 @@ async function main() {
       courseCode: 'CS-892',
       issuedAt: issuedDate,
       credentialHash,
-      merkleRoot,
+      merkleRoot: credentialHash,
       digitalSignature: signature,
       qrCodeUrl: `/api/v1/credentials/qr/${certNumber}`,
+      onChainRevocationStatus: 'NOT_REVOKED',
       blockchainAnchor: {
         create: {
           network: 'Ethereum Sepolia',
           contractAddress: null, // Nullable pending deployment
           transactionHash: null, // Nullable pending deployment - NO fake hashes
           blockNumber: null,
-          merkleRoot,
-          merkleProof: [credentialHash],
+          merkleRoot: credentialHash,
+          merkleProof: [], // Single-leaf direct anchor has empty sibling proof array
           isConfirmed: false,
           status: 'PENDING_BLOCKCHAIN',
         },
@@ -234,23 +224,17 @@ async function main() {
   });
 
   const revokedHash = computeSha256(revokedPayload);
-  const revokedMerkleRoot = computeMerkleRoot([revokedHash]);
   const revokedSigRes = await signCredentialPayload(revokedPayload, demoOxfordWallet.privateKey);
 
   await prisma.credential.upsert({
     where: { certificateNumber: revokedCertNum },
-    update: {
-      credentialHash: revokedHash,
-      merkleRoot: revokedMerkleRoot,
-      digitalSignature: revokedSigRes.signature,
-      status: 'REVOKED',
-    },
+    update: {}, // Safe upsert: preserve revoked state
     create: {
       certificateNumber: revokedCertNum,
       studentId: alexUser.id,
       issuerId: oxfordUser.id,
       title: 'Introductory Blockchain Technologies (Legacy)',
-      description: 'Superceded by M.Sc. Curriculum update.',
+      description: 'Superseded by M.Sc. Curriculum update.',
       type: 'COURSE_COMPLETION',
       status: 'REVOKED',
       badgeLevel: 'BRONZE',
@@ -258,13 +242,23 @@ async function main() {
       revokedAt: new Date('2024-11-01T08:00:00Z'),
       revocationReason: 'Credential superseded by upgraded Master of Science degree program.',
       credentialHash: revokedHash,
-      merkleRoot: revokedMerkleRoot,
+      merkleRoot: revokedHash,
       digitalSignature: revokedSigRes.signature,
+      onChainRevocationStatus: 'REVOKE_PENDING',
     },
   });
 
   console.log('--- Development Seeding Completed Successfully! ---');
 }
+
+main()
+  .catch((e) => {
+    console.error('Seeding error:', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
 
 main()
   .catch((e) => {

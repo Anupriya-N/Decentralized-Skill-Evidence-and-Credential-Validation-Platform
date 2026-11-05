@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { env } from '../config/env.js';
 import { CertiTrustAnchorABI } from '../config/contractAbi.js';
+import { validateBytes32Hash } from '../utils/crypto.js';
 
 export class BlockchainService {
   constructor() {
@@ -8,10 +9,21 @@ export class BlockchainService {
     this.signer = null;
     this.contract = null;
     this.isConfigured = false;
-    this.init();
+    this.initPromise = null;
+    // Start background initialization promise
+    this.initPromise = this.initialize();
   }
 
-  async init() {
+  /**
+   * Ensures asynchronous initialization is completely resolved before any operations
+   */
+  async ensureInitialized() {
+    if (this.initPromise) {
+      await this.initPromise;
+    }
+  }
+
+  async initialize() {
     try {
       if (env.BLOCKCHAIN_RPC_URL) {
         this.provider = new ethers.JsonRpcProvider(env.BLOCKCHAIN_RPC_URL);
@@ -24,9 +36,22 @@ export class BlockchainService {
         env.CONTRACT_ADDRESS &&
         ethers.isAddress(env.CONTRACT_ADDRESS)
       ) {
-        // Verify contract bytecode exists at configured address
-        const code = await this.provider.getCode(env.CONTRACT_ADDRESS);
-        if (code && code !== '0x' && code !== '0x0') {
+        // Enforce network connection with timeout
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('RPC initialization check timed out')), 2500)
+        );
+
+        const checkPromise = Promise.all([
+          this.provider.getNetwork(),
+          this.provider.getCode(env.CONTRACT_ADDRESS),
+        ]);
+
+        const [network, code] = await Promise.race([checkPromise, timeoutPromise]);
+
+        const chainIdMatches = Number(network.chainId) === env.CHAIN_ID;
+        const codeExists = code && code !== '0x' && code !== '0x0';
+
+        if (chainIdMatches && codeExists) {
           const cleanKey = env.BLOCKCHAIN_PRIVATE_KEY.startsWith('0x')
             ? env.BLOCKCHAIN_PRIVATE_KEY
             : `0x${env.BLOCKCHAIN_PRIVATE_KEY}`;
@@ -45,9 +70,11 @@ export class BlockchainService {
   }
 
   /**
-   * Health and connectivity check with 2.5s network timeout
+   * Health and connectivity check
    */
   async getStatus() {
+    await this.ensureInitialized();
+
     try {
       if (!this.provider) {
         return { isConnected: false, status: 'NOT_CONFIGURED', error: 'No RPC endpoint configured' };
@@ -85,14 +112,29 @@ export class BlockchainService {
 
   /**
    * Anchors credential hash on-chain.
-   * If not configured or failed, stores NULL transaction values - NEVER fabricates fake hashes.
+   * Strictly validates 32-byte hex hash.
+   * Stores NULL transaction values for pending operations - NEVER fabricates hashes.
    */
   async anchorCredential(credentialHash, expectedIssuerAddress) {
+    await this.ensureInitialized();
+
+    // Priority 4.3: Reject malformed hashes instead of silent padding
+    if (!validateBytes32Hash(credentialHash)) {
+      return {
+        isConfirmed: false,
+        status: 'INVALID_HASH_FORMAT',
+        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
+        transactionHash: null,
+        blockNumber: null,
+        contractAddress: null,
+      };
+    }
+
     if (!this.isConfigured || !this.contract) {
       return {
         isConfirmed: false,
         status: 'PENDING_BLOCKCHAIN',
-        reason: 'Sepolia wallet or contract address not deployed or configured in environment',
+        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
         transactionHash: null,
         blockNumber: null,
         contractAddress: null,
@@ -100,24 +142,35 @@ export class BlockchainService {
     }
 
     try {
-      const formattedHash = credentialHash.startsWith('0x')
-        ? credentialHash.padEnd(66, '0').slice(0, 66)
-        : '0x' + credentialHash.padEnd(64, '0').slice(0, 64);
+      // Priority 4.2: Enforce configured chain ID before write operations
+      const network = await this.provider.getNetwork();
+      if (Number(network.chainId) !== env.CHAIN_ID) {
+        return {
+          isConfirmed: false,
+          status: 'CHAIN_MISMATCH',
+          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          transactionHash: null,
+          blockNumber: null,
+          contractAddress: null,
+        };
+      }
+
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
 
       const tx = await this.contract.registerCredential(formattedHash);
       const receipt = await tx.wait(1);
 
-      if (receipt.status !== 1) {
+      if (!receipt || receipt.status !== 1) {
         return {
           isConfirmed: false,
           status: 'FAILED',
-          reason: 'Blockchain transaction reverted',
-          transactionHash: receipt.hash,
-          blockNumber: BigInt(receipt.blockNumber),
+          reason: 'Blockchain transaction reverted or receipt status failed',
+          transactionHash: receipt?.hash || null,
+          blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
         };
       }
 
-      // Read back to confirm on-chain state
+      // Read back to confirm state
       const [exists, onChainIssuer, issuedAt, revoked] = await this.contract.verifyCredential(formattedHash);
 
       const isIssuerMatch = expectedIssuerAddress
@@ -128,7 +181,7 @@ export class BlockchainService {
 
       return {
         isConfirmed,
-        status: isConfirmed ? 'CONFIRMED' : 'FAILED_VALIDATION',
+        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
         gasUsed: BigInt(receipt.gasUsed || 0),
@@ -148,9 +201,22 @@ export class BlockchainService {
   }
 
   /**
-   * Read-back verification from smart contract
+   * Live on-chain verification from smart contract.
+   * Validates chain ID, bytecode, credential existence, issuer address, and revocation status.
    */
   async verifyOnChain(credentialHash, expectedIssuerAddress) {
+    await this.ensureInitialized();
+
+    if (!validateBytes32Hash(credentialHash)) {
+      return {
+        checked: false,
+        isConfirmed: false,
+        exists: false,
+        revoked: false,
+        status: 'INVALID_HASH_FORMAT',
+      };
+    }
+
     if (!this.provider || !env.CONTRACT_ADDRESS || !ethers.isAddress(env.CONTRACT_ADDRESS)) {
       return {
         checked: false,
@@ -163,9 +229,7 @@ export class BlockchainService {
 
     try {
       const readContract = new ethers.Contract(env.CONTRACT_ADDRESS, CertiTrustAnchorABI, this.provider);
-      const formattedHash = credentialHash.startsWith('0x')
-        ? credentialHash.padEnd(66, '0').slice(0, 66)
-        : '0x' + credentialHash.padEnd(64, '0').slice(0, 64);
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
 
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('On-chain read timed out')), 2500)
@@ -206,17 +270,22 @@ export class BlockchainService {
    * Revoke on-chain credential
    */
   async revokeOnChain(credentialHash) {
+    await this.ensureInitialized();
+
+    if (!validateBytes32Hash(credentialHash)) {
+      return { success: false, reason: 'Invalid credential hash format' };
+    }
+
     if (!this.isConfigured || !this.contract) {
-      return { success: false, reason: 'Blockchain wallet not configured' };
+      return { success: false, reason: 'Blockchain relayer wallet or contract not configured' };
     }
 
     try {
-      const formattedHash = credentialHash.startsWith('0x')
-        ? credentialHash.padEnd(66, '0').slice(0, 66)
-        : '0x' + credentialHash.padEnd(64, '0').slice(0, 64);
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
 
       const tx = await this.contract.revokeCredential(formattedHash);
       const receipt = await tx.wait(1);
+
       return {
         success: receipt.status === 1,
         transactionHash: receipt.hash,

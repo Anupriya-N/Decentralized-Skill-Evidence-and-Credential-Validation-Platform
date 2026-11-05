@@ -7,13 +7,17 @@ import {
   signCredentialPayload,
   computeMerkleRoot,
 } from '../utils/crypto.js';
+import { decryptPrivateKey } from '../utils/encryption.js';
 import { generateQrDataUrl, generateQrSvg } from '../utils/qr.js';
 import { blockchainService } from '../services/blockchain.service.js';
 import { env } from '../config/env.js';
+import { ethers } from 'ethers';
 
 export class CredentialController {
   /**
-   * Issue a new credential (Institution only, must be accredited)
+   * Issue a new credential.
+   * Priority 1: Uses decrypted institutional signing key (never BLOCKCHAIN_PRIVATE_KEY).
+   * Validates target is STUDENT.
    */
   async issue(req, res, next) {
     try {
@@ -41,7 +45,7 @@ export class CredentialController {
         throw new ForbiddenError('Only accredited institutions are authorized to issue credentials');
       }
 
-      // 2. Find student and enforce: Only STUDENT accounts may receive student credentials
+      // 2. Enforce: Only STUDENT accounts may receive student credentials
       let student = await prisma.user.findFirst({
         where: {
           OR: [
@@ -64,15 +68,36 @@ export class CredentialController {
         throw new ForbiddenError('Issuing institutions cannot issue student credentials to themselves');
       }
 
-      // 4. Retrieve institutional signing key
-      const signingKey =
-        req.user.rawUser?.institutionProfile?.signingPrivateKey ||
-        process.env.INSTITUTION_SIGNING_KEY ||
-        env.BLOCKCHAIN_PRIVATE_KEY;
+      // 4. Retrieve institutional private signing key (Priority 1: Dedicated institutional key, never BLOCKCHAIN_PRIVATE_KEY)
+      let institutionalKey = null;
+      const encryptedKey = req.user.rawUser?.institutionProfile?.encryptedSigningKey;
+      if (encryptedKey) {
+        institutionalKey = decryptPrivateKey(encryptedKey);
+      }
 
-      if (!signingKey || signingKey.length < 64) {
+      if (!institutionalKey && process.env.INSTITUTION_SIGNING_KEY) {
+        institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
+      }
+
+      if (!institutionalKey || institutionalKey.length < 64) {
         throw new BadRequestError(
-          'Institutional ECDSA private signing key is not configured. Cannot generate genuine cryptographic signature.'
+          'Institutional private signing key is not configured or could not be decrypted. Institution must provision a secure signing key before issuing credentials.'
+        );
+      }
+
+      // Verify signing key matches registered institution public identity
+      const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
+      const signingWallet = new ethers.Wallet(cleanKey);
+      const registeredIssuerAddress =
+        req.user.rawUser?.walletAddress || req.user.rawUser?.institutionProfile?.signingPublicKey;
+
+      if (
+        registeredIssuerAddress &&
+        ethers.isAddress(registeredIssuerAddress) &&
+        signingWallet.address.toLowerCase() !== registeredIssuerAddress.toLowerCase()
+      ) {
+        throw new BadRequestError(
+          `Signing key address (${signingWallet.address}) does not match the institution's registered public identity (${registeredIssuerAddress})`
         );
       }
 
@@ -95,13 +120,12 @@ export class CredentialController {
       // 6. Independent hash computation
       const credentialHash = computeSha256(normalizedPayload);
 
-      // 7. Genuine Ethereum ECDSA digital signature
-      const { signature } = await signCredentialPayload(normalizedPayload, signingKey);
+      // 7. Genuine Ethereum ECDSA digital signature using institutional key
+      const { signature } = await signCredentialPayload(normalizedPayload, cleanKey);
       const merkleRoot = computeMerkleRoot([credentialHash]);
 
       // 8. Genuine Blockchain Anchor Submission (nullable for pending, no fake hashes)
-      const issuerWallet = req.user.rawUser?.walletAddress || req.user.rawUser?.institutionProfile?.signingPublicKey;
-      const anchorResult = await blockchainService.anchorCredential(credentialHash, issuerWallet);
+      const anchorResult = await blockchainService.anchorCredential(credentialHash, signingWallet.address);
 
       // 9. Store in PostgreSQL
       const credential = await prisma.credential.create({
@@ -121,6 +145,7 @@ export class CredentialController {
           digitalSignature: signature,
           expiresAt: expiresAt ? new Date(expiresAt) : null,
           qrCodeUrl: `${env.FRONTEND_URL}/verify/${certNumber}`,
+          onChainRevocationStatus: 'NOT_REVOKED',
           blockchainAnchor: {
             create: {
               network: anchorResult.network || 'Ethereum Sepolia',
@@ -136,7 +161,21 @@ export class CredentialController {
         },
         include: {
           student: { select: { id: true, name: true, walletAddress: true } },
-          issuer: { select: { id: true, name: true, institutionProfile: true } },
+          issuer: {
+            select: {
+              id: true,
+              name: true,
+              walletAddress: true,
+              institutionProfile: {
+                select: {
+                  institutionName: true,
+                  isAccredited: true,
+                  signingPublicKey: true,
+                  officialDomain: true,
+                },
+              },
+            },
+          },
           blockchainAnchor: true,
         },
       });
@@ -206,7 +245,7 @@ export class CredentialController {
   }
 
   /**
-   * Revoke a credential (Only authorized issuer or admin)
+   * Revoke a credential (Priority 5: Tracks database and on-chain revocation separately)
    */
   async revoke(req, res, next) {
     try {
@@ -222,12 +261,26 @@ export class CredentialController {
       }
 
       if (credential.status === 'REVOKED') {
-        throw new BadRequestError('Credential is already revoked');
+        throw new BadRequestError('Credential is already revoked in the system');
       }
 
-      // Priority 4.3: Only authorized issuers may revoke their own credentials
+      // Only authorized issuer or admin can revoke
       if (req.user.role !== 'ADMIN' && credential.issuerId !== req.user.id) {
         throw new ForbiddenError('Only the issuing institution or an administrator can revoke this credential');
+      }
+
+      // Attempt on-chain revocation
+      let onChainRevocationStatus = 'REVOKE_PENDING';
+      let onChainRevocationTx = null;
+
+      if (credential.credentialHash) {
+        const onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
+        if (onChainResult.success) {
+          onChainRevocationStatus = 'REVOKE_CONFIRMED';
+          onChainRevocationTx = onChainResult.transactionHash;
+        } else {
+          onChainRevocationStatus = 'REVOKE_PENDING';
+        }
       }
 
       const updated = await prisma.credential.update({
@@ -236,13 +289,10 @@ export class CredentialController {
           status: 'REVOKED',
           revokedAt: new Date(),
           revocationReason: reason || 'Revoked by authorized institution',
+          onChainRevocationStatus,
+          onChainRevocationTx,
         },
       });
-
-      // On-chain revocation if blockchain is configured
-      if (credential.credentialHash) {
-        await blockchainService.revokeOnChain(credential.credentialHash);
-      }
 
       // Audit Log
       await prisma.auditLog.create({
@@ -251,7 +301,7 @@ export class CredentialController {
           action: 'CREDENTIAL_REVOKED',
           entity: 'CREDENTIAL',
           entityId: credential.id,
-          details: { reason },
+          details: { reason, onChainRevocationStatus },
         },
       });
 
@@ -268,7 +318,57 @@ export class CredentialController {
 
       res.status(200).json({
         success: true,
-        message: 'Credential revoked successfully',
+        message: `Credential revoked locally (${onChainRevocationStatus === 'REVOKE_CONFIRMED' ? 'blockchain confirmed' : 'blockchain reconciliation pending'})`,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Reconcile pending on-chain revocation (Priority 5)
+   */
+  async reconcileRevocation(req, res, next) {
+    try {
+      const { id } = req.params;
+
+      const credential = await prisma.credential.findFirst({
+        where: { OR: [{ id }, { certificateNumber: id }] },
+      });
+
+      if (!credential || credential.status !== 'REVOKED') {
+        throw new BadRequestError('Credential must be locally revoked before reconciling on-chain');
+      }
+
+      if (credential.onChainRevocationStatus === 'REVOKE_CONFIRMED') {
+        return res.status(200).json({
+          success: true,
+          message: 'On-chain revocation is already confirmed',
+          data: credential,
+        });
+      }
+
+      const onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
+      if (!onChainResult.success) {
+        return res.status(503).json({
+          success: false,
+          message: `On-chain revocation retry failed: ${onChainResult.reason || onChainResult.error}`,
+          status: 'REVOKE_PENDING',
+        });
+      }
+
+      const updated = await prisma.credential.update({
+        where: { id: credential.id },
+        data: {
+          onChainRevocationStatus: 'REVOKE_CONFIRMED',
+          onChainRevocationTx: onChainResult.transactionHash,
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'On-chain revocation reconciled and confirmed',
         data: updated,
       });
     } catch (error) {
@@ -309,7 +409,7 @@ export class CredentialController {
   }
 
   /**
-   * Get credential by ID or Certificate Number (Sanitized: No student email exposed)
+   * Get credential by ID or Certificate Number (Sanitized: Never exposes private keys or emails)
    */
   async getById(req, res, next) {
     try {
@@ -329,7 +429,8 @@ export class CredentialController {
             select: {
               id: true,
               name: true,
-              institutionProfile: { select: { institutionName: true, isAccredited: true } },
+              walletAddress: true,
+              institutionProfile: { select: { institutionName: true, isAccredited: true, signingPublicKey: true } },
             },
           },
           skills: { include: { skill: true } },

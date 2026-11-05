@@ -16,6 +16,10 @@ router.post('/:id/revoke', authenticate, authorize('INSTITUTION', 'ADMIN'), (req
   credentialController.revoke(req, res, next)
 );
 
+router.post('/:id/reconcile-revocation', authenticate, authorize('INSTITUTION', 'ADMIN'), (req, res, next) =>
+  credentialController.reconcileRevocation(req, res, next)
+);
+
 router.get('/qr/:id', (req, res, next) =>
   credentialController.getQrCode(req, res, next)
 );

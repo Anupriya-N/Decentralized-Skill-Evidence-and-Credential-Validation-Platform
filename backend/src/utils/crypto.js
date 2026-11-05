@@ -3,19 +3,20 @@ import fs from 'fs';
 import { ethers } from 'ethers';
 
 /**
- * Normalizes credential payload deterministically before hashing
+ * Normalizes credential payload deterministically before hashing.
+ * Sorts all object keys alphabetically and trims whitespace.
  */
 export function normalizeCredentialPayload(data) {
   const normalized = {
+    badgeLevel: String(data.badgeLevel || 'BRONZE'),
     certificateNumber: String(data.certificateNumber || '').trim(),
-    studentId: String(data.studentId || '').trim(),
+    courseCode: data.courseCode ? String(data.courseCode).trim() : null,
+    grade: data.grade ? String(data.grade).trim() : null,
+    issuedAt: data.issuedAt ? new Date(data.issuedAt).toISOString() : new Date().toISOString(),
     issuerId: String(data.issuerId || '').trim(),
+    studentId: String(data.studentId || '').trim(),
     title: String(data.title || '').trim(),
     type: String(data.type || 'CERTIFICATE'),
-    badgeLevel: String(data.badgeLevel || 'BRONZE'),
-    grade: data.grade ? String(data.grade).trim() : null,
-    courseCode: data.courseCode ? String(data.courseCode).trim() : null,
-    issuedAt: data.issuedAt ? new Date(data.issuedAt).toISOString() : new Date().toISOString(),
   };
 
   const sortedKeys = Object.keys(normalized).sort();
@@ -55,7 +56,18 @@ export function computeFileSha256(filePath) {
 }
 
 /**
- * Calculates Merkle Root from an array of leaf hashes
+ * Canonical binary pair hashing for Merkle Trees.
+ * Uses lexicographical sorting of child hashes to guarantee deterministic pairing.
+ */
+function hashPair(a, b) {
+  const cleanA = a.startsWith('0x') ? a.slice(2) : a;
+  const cleanB = b.startsWith('0x') ? b.slice(2) : b;
+  const combined = cleanA < cleanB ? cleanA + cleanB : cleanB + cleanA;
+  return computeSha256(combined);
+}
+
+/**
+ * Computes Merkle Root from an array of leaf hashes
  */
 export function computeMerkleRoot(hashes) {
   if (!hashes || hashes.length === 0) {
@@ -67,14 +79,10 @@ export function computeMerkleRoot(hashes) {
     const nextLevel = [];
     for (let i = 0; i < currentLevel.length; i += 2) {
       if (i + 1 < currentLevel.length) {
-        const left = currentLevel[i];
-        const right = currentLevel[i + 1];
-        const combined = left < right ? left + right : right + left;
-        nextLevel.push(computeSha256(combined));
+        nextLevel.push(hashPair(currentLevel[i], currentLevel[i + 1]));
       } else {
-        const left = currentLevel[i];
-        const combined = left + left;
-        nextLevel.push(computeSha256(combined));
+        // Duplicate odd element to balance tree
+        nextLevel.push(hashPair(currentLevel[i], currentLevel[i]));
       }
     }
     currentLevel = nextLevel;
@@ -84,12 +92,101 @@ export function computeMerkleRoot(hashes) {
 }
 
 /**
- * Validates Merkle Root against leaf hash
+ * Generates a complete Merkle Tree with genuine proof arrays for each leaf hash.
+ * Supports multi-credential batch anchoring.
  */
-export function verifyMerkleRootMatch(leafHash, expectedRoot) {
+export function buildMerkleTree(leafHashes) {
+  if (!leafHashes || leafHashes.length === 0) {
+    const emptyRoot = '0x' + computeSha256('');
+    return { root: emptyRoot, proofs: {}, leavesCount: 0 };
+  }
+
+  const cleanLeaves = leafHashes.map((h) => (h.startsWith('0x') ? h.slice(2) : h));
+  
+  // Single leaf case: direct anchoring, proof is empty array
+  if (cleanLeaves.length === 1) {
+    const root = '0x' + cleanLeaves[0];
+    const originalLeaf = leafHashes[0];
+    return {
+      root,
+      proofs: { [originalLeaf]: [] },
+      leavesCount: 1,
+      isBatch: false,
+    };
+  }
+
+  // Multi-leaf tree: store levels for proof extraction
+  const treeLevels = [cleanLeaves];
+  let currentLevel = cleanLeaves;
+
+  while (currentLevel.length > 1) {
+    const nextLevel = [];
+    for (let i = 0; i < currentLevel.length; i += 2) {
+      if (i + 1 < currentLevel.length) {
+        nextLevel.push(hashPair(currentLevel[i], currentLevel[i + 1]));
+      } else {
+        nextLevel.push(hashPair(currentLevel[i], currentLevel[i]));
+      }
+    }
+    treeLevels.push(nextLevel);
+    currentLevel = nextLevel;
+  }
+
+  const root = '0x' + treeLevels[treeLevels.length - 1][0];
+  const proofs = {};
+
+  // Generate proof path for each original leaf
+  for (let i = 0; i < cleanLeaves.length; i++) {
+    const originalKey = leafHashes[i];
+    const proofPath = [];
+    let index = i;
+
+    for (let level = 0; level < treeLevels.length - 1; level++) {
+      const levelNodes = treeLevels[level];
+      const isRightNode = index % 2 === 1;
+      const siblingIndex = isRightNode ? index - 1 : index + 1;
+
+      if (siblingIndex < levelNodes.length) {
+        proofPath.push('0x' + levelNodes[siblingIndex]);
+      } else {
+        // Balanced duplicate
+        proofPath.push('0x' + levelNodes[index]);
+      }
+      index = Math.floor(index / 2);
+    }
+    proofs[originalKey] = proofPath;
+  }
+
+  return {
+    root,
+    proofs,
+    leavesCount: cleanLeaves.length,
+    isBatch: true,
+  };
+}
+
+/**
+ * Validates a Merkle Proof against expected root.
+ * Evaluates empty proof for single-leaf anchoring and multi-sibling proof for batches.
+ */
+export function verifyMerkleProof(leafHash, proof, expectedRoot) {
   if (!leafHash || !expectedRoot) return false;
-  const calculatedRoot = computeMerkleRoot([leafHash]);
-  return calculatedRoot.toLowerCase() === expectedRoot.toLowerCase();
+
+  const cleanLeaf = leafHash.startsWith('0x') ? leafHash.slice(2) : leafHash;
+  const cleanExpectedRoot = expectedRoot.startsWith('0x') ? expectedRoot.slice(2) : expectedRoot;
+
+  // Single-leaf anchoring: proof is empty, leaf must equal root
+  if (!proof || proof.length === 0) {
+    return cleanLeaf.toLowerCase() === cleanExpectedRoot.toLowerCase();
+  }
+
+  let current = cleanLeaf;
+  for (const sibling of proof) {
+    const cleanSibling = sibling.startsWith('0x') ? sibling.slice(2) : sibling;
+    current = hashPair(current, cleanSibling);
+  }
+
+  return current.toLowerCase() === cleanExpectedRoot.toLowerCase();
 }
 
 /**
@@ -103,8 +200,16 @@ export function generateCertificateNumber(prefix = 'CERT', department = 'CS') {
 }
 
 /**
- * Generates a genuine institutional digital signature using an Ethereum ECDSA private key.
- * REJECTS mock keys or fallback strings.
+ * Validates 32-byte hex hash format (strict rejection of malformed hashes)
+ */
+export function validateBytes32Hash(hash) {
+  if (!hash || typeof hash !== 'string') return false;
+  return /^0x[0-9a-fA-F]{64}$/.test(hash) || /^[0-9a-fA-F]{64}$/.test(hash);
+}
+
+/**
+ * Generates an institutional digital signature using an Ethereum ECDSA private key.
+ * REJECTS mock keys, non-hex keys, and fallbacks.
  */
 export async function signCredentialPayload(normalizedPayload, institutionalPrivateKey) {
   if (!institutionalPrivateKey) {
@@ -115,8 +220,8 @@ export async function signCredentialPayload(normalizedPayload, institutionalPriv
     ? institutionalPrivateKey
     : `0x${institutionalPrivateKey}`;
 
-  if (cleanKey.length !== 66) {
-    throw new Error('Invalid institutional private signing key: must be a 32-byte hex string (64 characters or 66 with 0x)');
+  if (!/^0x[0-9a-fA-F]{64}$/.test(cleanKey)) {
+    throw new Error('Invalid institutional private signing key: must be a 32-byte hex string');
   }
 
   const wallet = new ethers.Wallet(cleanKey);
@@ -132,7 +237,6 @@ export async function signCredentialPayload(normalizedPayload, institutionalPriv
 
 /**
  * Cryptographically verifies digital signature against payload and expected issuer Ethereum address.
- * No mock verification or fake string checks.
  */
 export function verifyCredentialSignature(normalizedPayload, signature, expectedSignerAddress) {
   if (!signature || typeof signature !== 'string' || !signature.startsWith('0x')) {

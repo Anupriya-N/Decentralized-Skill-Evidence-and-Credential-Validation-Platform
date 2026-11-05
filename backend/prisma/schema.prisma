@@ -217,7 +217,7 @@ model InstitutionProfile {
   accreditationNumber  String?
   isAccredited         Boolean     @default(false)
   signingPublicKey     String?
-  signingPrivateKey    String?
+  encryptedSigningKey  String?
   officialDomain       String?
   logoUrl              String?
   contactEmail         String?
@@ -370,6 +370,8 @@ model Credential {
   expiresAt            DateTime?
   revokedAt            DateTime?
   revocationReason     String?
+  onChainRevocationStatus String?     @default("NOT_REVOKED")
+  onChainRevocationTx     String?
   credentialHash       String           @unique
   merkleRoot           String?
   digitalSignature     String

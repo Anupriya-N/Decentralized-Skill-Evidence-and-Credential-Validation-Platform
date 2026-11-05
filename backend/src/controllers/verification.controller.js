@@ -4,14 +4,16 @@ import {
   normalizeCredentialPayload,
   computeSha256,
   verifyCredentialSignature,
-  verifyMerkleRootMatch,
+  verifyMerkleProof,
 } from '../utils/crypto.js';
 import { blockchainService } from '../services/blockchain.service.js';
 import fs from 'fs';
 
 export class VerificationController {
   /**
-   * 6-Point Cryptographic & Blockchain Verification Audit
+   * 6-Point Cryptographic & Real Blockchain Verification Audit.
+   * Priority 3: Strictly requires live on-chain contract read.
+   * NEVER returns VALID based solely on PostgreSQL database records.
    */
   async verifyCredential(req, res, next) {
     try {
@@ -74,7 +76,7 @@ export class VerificationController {
       const recalculatedHash = computeSha256(normalizedPayload);
       const hashIntegrity = credential.credentialHash === recalculatedHash;
 
-      // 2. Genuine ECDSA Signature Verification
+      // 2. Genuine ECDSA Signature Verification against registered issuer identity
       const expectedIssuerAddress =
         credential.issuer.walletAddress || credential.issuer?.institutionProfile?.signingPublicKey;
 
@@ -85,12 +87,15 @@ export class VerificationController {
       );
       const signatureValid = signatureResult.isValid;
 
-      // 3. Merkle Root Integrity (Recalculated mathematically, no string length check)
+      // 3. Merkle Root Integrity (Mathematical proof verification)
+      const merkleProofArray = Array.isArray(credential.blockchainAnchor?.merkleProof)
+        ? credential.blockchainAnchor.merkleProof
+        : [];
       const merkleRootMatch = credential.merkleRoot
-        ? verifyMerkleRootMatch(recalculatedHash, credential.merkleRoot)
+        ? verifyMerkleProof(recalculatedHash, merkleProofArray, credential.merkleRoot)
         : false;
 
-      // 4. Revocation Status Check (Database + On-chain)
+      // 4. Revocation Status Check (Database status: locally revoked is ALWAYS treated as revoked)
       let notRevoked = credential.status !== 'REVOKED' && !credential.revokedAt;
 
       // 5. Expiration Date Check
@@ -99,18 +104,23 @@ export class VerificationController {
       // 6. Issuer Accreditation Check
       const issuerAccredited = Boolean(credential.issuer?.institutionProfile?.isAccredited);
 
-      // 7. On-chain Verification (Sepolia smart contract check)
+      // 7. Live On-Chain Contract Verification (Priority 3: Strictly requires live contract read)
       let blockchainRecorded = false;
-      const onChainStatus = await blockchainService.verifyOnChain(credential.credentialHash, expectedIssuerAddress);
+      let onChainAudit = { checked: false, status: 'NOT_ATTEMPTED' };
 
-      if (onChainStatus.checked) {
-        if (onChainStatus.revoked) {
-          notRevoked = false;
+      if (credential.credentialHash) {
+        const onChainStatus = await blockchainService.verifyOnChain(credential.credentialHash, expectedIssuerAddress);
+        onChainAudit = onChainStatus;
+
+        if (onChainStatus.checked) {
+          if (onChainStatus.revoked) {
+            notRevoked = false;
+          }
+          blockchainRecorded = Boolean(onChainStatus.isConfirmed);
+        } else {
+          // Priority 3.1 & 3.9: NEVER fall back to database isConfirmed. Must remain false if live contract unavailable.
+          blockchainRecorded = false;
         }
-        blockchainRecorded = onChainStatus.isConfirmed;
-      } else {
-        // If contract not configured, reflect actual anchor status
-        blockchainRecorded = Boolean(credential.blockchainAnchor?.isConfirmed);
       }
 
       const checks = {
@@ -126,7 +136,7 @@ export class VerificationController {
       const passedCount = Object.values(checks).filter(Boolean).length;
       const verificationScore = Math.round((passedCount / totalChecks) * 100);
 
-      // Strictly evaluate overall status
+      // Strictly evaluate overall status (Priority 3.9, 3.10, 3.11)
       let overallStatus = 'VALID';
       if (!notRevoked) {
         overallStatus = 'REVOKED';
@@ -139,11 +149,11 @@ export class VerificationController {
       } else if (!issuerAccredited) {
         overallStatus = 'INVALID_ISSUER';
       } else if (!blockchainRecorded) {
-        // If all cryptographic & database checks pass but blockchain is not yet anchored
+        // Cryptographically signed and verified in DB, but awaiting live on-chain contract confirmation
         overallStatus = 'PENDING_BLOCKCHAIN';
       }
 
-      // Record audit verification log without exposing to public
+      // Record internal verification log
       await prisma.verificationLog.create({
         data: {
           credentialId: credential.id,
@@ -157,13 +167,19 @@ export class VerificationController {
         },
       });
 
-      // Data Privacy: Clean response omitting private student email and internal logs
+      // Priority 5: Public sanitization omitting student email and internal database logs
       res.status(200).json({
         success: true,
         data: {
           overallStatus,
           verificationScore,
           checks,
+          onChainVerification: {
+            liveCheckPerformed: onChainAudit.checked,
+            status: onChainAudit.status,
+            onChainRevoked: onChainAudit.revoked || false,
+            issuerMatched: onChainAudit.isIssuerMatch || false,
+          },
           credential: {
             id: credential.id,
             certificateNumber: credential.certificateNumber,
@@ -176,6 +192,7 @@ export class VerificationController {
             expiresAt: credential.expiresAt,
             revokedAt: credential.revokedAt,
             revocationReason: credential.revocationReason,
+            onChainRevocationStatus: credential.onChainRevocationStatus,
             credentialHash: credential.credentialHash,
             studentName: credential.student.name,
             studentWallet: credential.student.walletAddress,
@@ -189,8 +206,8 @@ export class VerificationController {
                   blockNumber: credential.blockchainAnchor.blockNumber ? credential.blockchainAnchor.blockNumber.toString() : null,
                   contractAddress: credential.blockchainAnchor.contractAddress,
                   timestamp: credential.blockchainAnchor.timestamp,
-                  isConfirmed: credential.blockchainAnchor.isConfirmed,
-                  status: credential.blockchainAnchor.status,
+                  isConfirmed: blockchainRecorded,
+                  status: blockchainRecorded ? 'CONFIRMED' : 'PENDING_BLOCKCHAIN',
                 }
               : null,
           },
@@ -203,7 +220,7 @@ export class VerificationController {
   }
 
   /**
-   * Verify uploaded physical document by re-hashing binary contents
+   * Verify uploaded document by re-hashing binary contents
    */
   async verifyDocument(req, res, next) {
     try {
