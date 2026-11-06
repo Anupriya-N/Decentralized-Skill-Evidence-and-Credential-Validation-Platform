@@ -2,9 +2,17 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 import { env } from './env.js';
 
-const uploadDirectory = path.resolve(env.UPLOAD_DIR, 'evidence');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+export const projectRootDir = path.resolve(__dirname, '../../../');
+
+// Always resolve to the root-level uploads/evidence directory regardless of working directory
+export const uploadDirectory = path.isAbsolute(env.UPLOAD_DIR)
+  ? path.resolve(env.UPLOAD_DIR, 'evidence')
+  : path.resolve(projectRootDir, env.UPLOAD_DIR.replace(/^\.\//, ''), 'evidence');
 
 if (!fs.existsSync(uploadDirectory)) {
   fs.mkdirSync(uploadDirectory, { recursive: true });

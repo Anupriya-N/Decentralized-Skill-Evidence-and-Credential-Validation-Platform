@@ -239,4 +239,163 @@ describe("CertiTrustAnchor Smart Contract", function () {
     expect(recordedIssuer).to.equal(issuer.address);
     expect(revoked).to.be.true;
   });
+
+  // Zero Hash Prevention
+  it("Should revert if credentialHash is zero bytes32(0)", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    const zeroHash = ethers.ZeroHash;
+
+    await expect(
+      anchor.connect(issuer).registerCredential(zeroHash)
+    ).to.be.revertedWith("CertiTrust: invalid credential hash");
+  });
+
+  // Expired Deadline Protection
+  it("Should reject relayed registration if deadline has expired", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    const nonce = await anchor.nonces(issuer.address);
+    const expiredDeadline = Math.floor(Date.now() / 1000) - 3600; // 1 hour in the past
+
+    const domain = {
+      name: "CertiTrustAnchor",
+      version: "1",
+      chainId: chainId,
+      verifyingContract: contractAddress,
+    };
+
+    const types = {
+      IssueAuthorization: [
+        { name: "credentialHash", type: "bytes32" },
+        { name: "issuer", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const signature = await issuer.signTypedData(domain, types, {
+      credentialHash: sampleHash,
+      issuer: issuer.address,
+      nonce: Number(nonce),
+      deadline: expiredDeadline,
+    });
+
+    await expect(
+      anchor.connect(relayer).registerCredentialWithSignature(
+        sampleHash,
+        issuer.address,
+        nonce,
+        expiredDeadline,
+        signature
+      )
+    ).to.be.revertedWith("CertiTrust: authorization signature expired");
+  });
+
+  // Invalid / Corrupted Signature Protection
+  it("Should reject relayed registration if signature is corrupted or invalid", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    const nonce = await anchor.nonces(issuer.address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    // Unauthorized party signs instead of the declared issuer
+    const domain = {
+      name: "CertiTrustAnchor",
+      version: "1",
+      chainId: chainId,
+      verifyingContract: contractAddress,
+    };
+
+    const types = {
+      IssueAuthorization: [
+        { name: "credentialHash", type: "bytes32" },
+        { name: "issuer", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const forgedSignature = await unauthorized.signTypedData(domain, types, {
+      credentialHash: sampleHash,
+      issuer: issuer.address,
+      nonce: Number(nonce),
+      deadline: deadline,
+    });
+
+    await expect(
+      anchor.connect(relayer).registerCredentialWithSignature(
+        sampleHash,
+        issuer.address,
+        nonce,
+        deadline,
+        forgedSignature
+      )
+    ).to.be.revertedWith("CertiTrust: invalid EIP-712 institutional signature");
+  });
+
+  // Issuer Mismatch on Revocation
+  it("Relayed revocation should revert if signer is not the original credential issuer", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    await anchor.connect(issuer).registerCredential(sampleHash);
+
+    const otherIssuer = unauthorized;
+    await anchor.authorizeIssuer(otherIssuer.address);
+
+    const nonce = await anchor.nonces(otherIssuer.address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    const domain = {
+      name: "CertiTrustAnchor",
+      version: "1",
+      chainId: chainId,
+      verifyingContract: contractAddress,
+    };
+
+    const types = {
+      RevokeAuthorization: [
+        { name: "credentialHash", type: "bytes32" },
+        { name: "issuer", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const signature = await otherIssuer.signTypedData(domain, types, {
+      credentialHash: sampleHash,
+      issuer: otherIssuer.address,
+      nonce: Number(nonce),
+      deadline: deadline,
+    });
+
+    await expect(
+      anchor.connect(relayer).revokeCredentialWithSignature(
+        sampleHash,
+        otherIssuer.address,
+        nonce,
+        deadline,
+        signature
+      )
+    ).to.be.revertedWith("CertiTrust: signer is not the original credential issuer");
+  });
+
+  // Ownership Transfer Tests
+  describe("Ownership Transfer Lifecycle", function () {
+    it("Owner can transfer ownership to a new address", async function () {
+      await expect(anchor.connect(owner).transferOwnership(issuer.address))
+        .to.emit(anchor, "OwnershipTransferred")
+        .withArgs(owner.address, issuer.address);
+
+      expect(await anchor.owner()).to.equal(issuer.address);
+    });
+
+    it("Non-owner cannot transfer ownership", async function () {
+      await expect(
+        anchor.connect(unauthorized).transferOwnership(unauthorized.address)
+      ).to.be.revertedWith("CertiTrust: caller is not the owner");
+    });
+
+    it("Cannot transfer ownership to zero address", async function () {
+      await expect(
+        anchor.connect(owner).transferOwnership(ethers.ZeroAddress)
+      ).to.be.revertedWith("CertiTrust: new owner is zero address");
+    });
+  });
 });

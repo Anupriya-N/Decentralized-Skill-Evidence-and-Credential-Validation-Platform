@@ -84,11 +84,14 @@ enum BadgeLevel {
 
 enum VerificationStatus {
   VALID
+  INVALID
+  TAMPERED
   REVOKED
   EXPIRED
-  TAMPERED
-  NOT_FOUND
+  PENDING_BLOCKCHAIN
+  INVALID_ISSUER
   INVALID_SIGNATURE
+  NOT_FOUND
 }
 
 enum VerificationType {

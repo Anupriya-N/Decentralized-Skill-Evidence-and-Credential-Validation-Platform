@@ -254,6 +254,48 @@ async function runTests() {
     if (fs.existsSync(validPdfPath)) fs.unlinkSync(validPdfPath);
     if (fs.existsSync(fakePdfPath)) fs.unlinkSync(fakePdfPath);
 
+    // Evidence Download Access Control (Ownership & RBAC)
+    const uploadedEvidenceId = uploadValid.data.data.id;
+    const studentDl = await request(`/api/v1/evidence/${uploadedEvidenceId}/download`, {
+      headers: { Authorization: `Bearer ${studentToken}` },
+    });
+    assert(studentDl.status === 200, 'Student successfully downloads own evidence (200 OK)');
+
+    const employerDl = await request(`/api/v1/evidence/${uploadedEvidenceId}/download`, {
+      headers: { Authorization: `Bearer ${recruiterToken}` },
+    });
+    assert(employerDl.status === 403, 'Unauthorized user blocked from downloading student evidence (403 Forbidden)');
+
+    // Document Verification by Content Re-Hash
+    const testRehashDoc = path.resolve('test_rehash.pdf');
+    fs.writeFileSync(testRehashDoc, Buffer.from(`%PDF-1.4\nUnique rehash test doc ${Date.now()}\n%%EOF`));
+    const formUpload = new FormData();
+    formUpload.append('file', new Blob([fs.readFileSync(testRehashDoc)], { type: 'application/pdf' }), 'test_rehash.pdf');
+    formUpload.append('title', 'Rehash Verification Doc');
+    await request('/api/v1/evidence/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${studentToken}` },
+      body: formUpload,
+      isFormData: true,
+    });
+
+    const verifyDocForm = new FormData();
+    verifyDocForm.append('file', new Blob([fs.readFileSync(testRehashDoc)], { type: 'application/pdf' }), 'test_rehash.pdf');
+    const verifyDocRes = await request('/api/v1/verification/verify-document', {
+      method: 'POST',
+      body: verifyDocForm,
+      isFormData: true,
+    });
+    assert(verifyDocRes.status === 200, 'POST /verification/verify-document returns 200');
+    assert(verifyDocRes.data.matchFound === true, 'Document verify matches recorded file hash');
+    assert(verifyDocRes.data.matchType === 'EVIDENCE', 'Document verify detects matchType EVIDENCE');
+    if (fs.existsSync(testRehashDoc)) fs.unlinkSync(testRehashDoc);
+
+    // Non-existent Credential Verification
+    const notFoundRes = await request('/api/v1/verification/verify/NON-EXISTENT-CREDENTIAL-XYZ');
+    assert(notFoundRes.status === 404, 'GET /verification/verify with non-existent ID returns 404');
+    assert(notFoundRes.data.status === 'NOT_FOUND', 'Verification reports status NOT_FOUND');
+
     // 13. Groq AI Integration
     console.log('\n--- 13. Groq AI Real Integration ---');
     const aiExtract = await request('/api/v1/ai/extract-skills', {

@@ -159,7 +159,7 @@ export class VerificationController {
           credentialId: credential.id,
           verifierId,
           verificationType: req.query.type === 'qr' ? 'QR_CODE' : 'PORTAL',
-          status: overallStatus === 'VALID' ? 'VALID' : (overallStatus === 'REVOKED' ? 'REVOKED' : 'EXPIRED'),
+          status: overallStatus,
           checksPassed: checks,
           verificationScore,
           ipAddress: req.ip,

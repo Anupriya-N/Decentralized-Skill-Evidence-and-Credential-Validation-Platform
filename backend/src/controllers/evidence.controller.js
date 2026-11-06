@@ -5,6 +5,7 @@ import { computeFileSha256, validateFileMagicBytes } from '../utils/crypto.js';
 import { groqService } from '../integrations/ai/groq.service.js';
 import { BadRequestError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import { env } from '../config/env.js';
+import { uploadDirectory } from '../config/multer.js';
 import pdfParse from 'pdf-parse';
 import { createWorker } from 'tesseract.js';
 
@@ -191,7 +192,7 @@ export class EvidenceController {
       }
 
       const safeFileName = path.basename(evidence.fileName);
-      const filePath = path.resolve(env.UPLOAD_DIR, 'evidence', safeFileName);
+      const filePath = path.resolve(uploadDirectory, safeFileName);
 
       if (!fs.existsSync(filePath)) {
         throw new NotFoundError('Underlying evidence document not found on storage');
