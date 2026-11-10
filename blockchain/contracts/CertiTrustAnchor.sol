@@ -190,6 +190,10 @@ contract CertiTrustAnchor {
             v += 27;
         }
         require(v == 27 || v == 28, "CertiTrust: invalid signature 'v' value");
+        require(
+            uint256(s) <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0,
+            "CertiTrust: invalid signature 's' value (malleability risk)"
+        );
         address signer = ecrecover(digest, v, r, s);
         require(signer != address(0), "CertiTrust: invalid signature recovery");
         return signer;

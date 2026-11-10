@@ -111,19 +111,26 @@ export class BlockchainService {
   }
 
   /**
-   * Reads current institutional nonce from smart contract for EIP-712 replay protection
+   * Reads current institutional nonce from smart contract for EIP-712 replay protection.
+   * Throws explicit error if RPC or contract read fails; never falls back to an invented nonce.
    */
   async getNonce(issuerAddress) {
     await this.ensureInitialized();
     if (!this.provider || !env.CONTRACT_ADDRESS || !ethers.isAddress(env.CONTRACT_ADDRESS)) {
-      return 0;
+      throw new Error('Blockchain provider or contract address is not configured. Cannot retrieve on-chain issuer nonce.');
+    }
+    if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+      throw new Error(`Invalid issuer address provided for nonce lookup: ${issuerAddress}`);
     }
     try {
       const readContract = new ethers.Contract(env.CONTRACT_ADDRESS, CertiTrustAnchorABI, this.provider);
-      const nonce = await readContract.nonces(issuerAddress);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('RPC query timed out after 3000ms')), 3000)
+      );
+      const nonce = await Promise.race([readContract.nonces(issuerAddress), timeoutPromise]);
       return Number(nonce);
-    } catch {
-      return 0;
+    } catch (err) {
+      throw new Error(`Failed to retrieve on-chain nonce for issuer ${issuerAddress}: ${err.message}`);
     }
   }
 
@@ -399,8 +406,15 @@ export class BlockchainService {
       );
       const receipt = await tx.wait(1);
 
+      if (!receipt || receipt.status !== 1) {
+        return { success: false, reason: 'Transaction reverted or receipt status failed' };
+      }
+
+      // Read back to confirm state
+      const [, , , revoked] = await this.contract.verifyCredential(formattedHash);
+
       return {
-        success: receipt.status === 1,
+        success: Boolean(revoked),
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
       };
@@ -410,7 +424,7 @@ export class BlockchainService {
   }
 
   /**
-   * Revoke on-chain credential directly
+   * Revoke on-chain credential directly (Requires contract owner permissions)
    */
   async revokeOnChain(credentialHash) {
     await this.ensureInitialized();
@@ -424,13 +438,30 @@ export class BlockchainService {
     }
 
     try {
+      // Verify that relayer wallet is the contract owner
+      const ownerAddress = await this.contract.owner();
+      const relayerAddress = await this.wallet.getAddress();
+      if (ownerAddress.toLowerCase() !== relayerAddress.toLowerCase()) {
+        return {
+          success: false,
+          reason: `Relayer wallet (${relayerAddress}) is not the contract owner (${ownerAddress}). Direct revocation requires contract owner permissions.`,
+        };
+      }
+
       const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
 
       const tx = await this.contract.revokeCredential(formattedHash);
       const receipt = await tx.wait(1);
 
+      if (!receipt || receipt.status !== 1) {
+        return { success: false, reason: 'Transaction reverted or receipt status failed' };
+      }
+
+      // Read back to confirm state
+      const [, , , revoked] = await this.contract.verifyCredential(formattedHash);
+
       return {
-        success: receipt.status === 1,
+        success: Boolean(revoked),
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
       };

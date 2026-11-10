@@ -331,6 +331,52 @@ describe("CertiTrustAnchor Smart Contract", function () {
     ).to.be.revertedWith("CertiTrust: invalid EIP-712 institutional signature");
   });
 
+  // Low-s Malleability Protection Test
+  it("Should reject malleable high-s signature", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    const nonce = await anchor.nonces(issuer.address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    const domain = {
+      name: "CertiTrustAnchor",
+      version: "1",
+      chainId: chainId,
+      verifyingContract: contractAddress,
+    };
+
+    const types = {
+      IssueAuthorization: [
+        { name: "credentialHash", type: "bytes32" },
+        { name: "issuer", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const signature = await issuer.signTypedData(domain, types, {
+      credentialHash: sampleHash,
+      issuer: issuer.address,
+      nonce: Number(nonce),
+      deadline: deadline,
+    });
+
+    const sig = ethers.Signature.from(signature);
+    const N = BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141");
+    const highS = (N - BigInt(sig.s)).toString(16).padStart(64, "0");
+    const flippedV = sig.v === 27 ? 28 : 27;
+    const malleableSig = ethers.concat([sig.r, "0x" + highS, ethers.toBeHex(flippedV, 1)]);
+
+    await expect(
+      anchor.connect(relayer).registerCredentialWithSignature(
+        sampleHash,
+        issuer.address,
+        nonce,
+        deadline,
+        malleableSig
+      )
+    ).to.be.revertedWith("CertiTrust: invalid signature 's' value (malleability risk)");
+  });
+
   // Issuer Mismatch on Revocation
   it("Relayed revocation should revert if signer is not the original credential issuer", async function () {
     await anchor.authorizeIssuer(issuer.address);

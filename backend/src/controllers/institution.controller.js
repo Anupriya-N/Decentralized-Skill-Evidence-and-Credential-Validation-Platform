@@ -259,10 +259,78 @@ export class InstitutionController {
       const leafHashes = preparedItems.map((p) => p.credHash);
       const merkleTree = buildMerkleTree(leafHashes);
 
-      // Phase 3: Persist credentials with genuine proofs
+      // Phase 3: Submit each credential via EIP-712 relayed anchoring and persist with genuine proofs
       const created = [];
-      for (const p of preparedItems) {
+      let startingNonce = null;
+      try {
+        startingNonce = await blockchainService.getNonce(signingWallet.address);
+      } catch (nonceErr) {
+        console.warn('Batch issue: could not fetch live nonce, will mark blockchain status as PENDING:', nonceErr.message);
+      }
+
+      for (let i = 0; i < preparedItems.length; i++) {
+        const p = preparedItems[i];
         const proof = merkleTree.proofs[p.credHash] || [];
+
+        let anchorResult = {
+          isConfirmed: false,
+          status: 'PENDING_BLOCKCHAIN',
+          transactionHash: null,
+          blockNumber: null,
+          contractAddress: env.CONTRACT_ADDRESS || null,
+          network: 'Ethereum Sepolia',
+        };
+
+        if (startingNonce !== null) {
+          try {
+            const itemNonce = startingNonce + i;
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+            const domain = {
+              name: 'CertiTrustAnchor',
+              version: '1',
+              chainId: env.CHAIN_ID,
+              verifyingContract: env.CONTRACT_ADDRESS,
+            };
+
+            const types = {
+              IssueAuthorization: [
+                { name: 'credentialHash', type: 'bytes32' },
+                { name: 'issuer', type: 'address' },
+                { name: 'nonce', type: 'uint256' },
+                { name: 'deadline', type: 'uint256' },
+              ],
+            };
+
+            const formattedHash = p.credHash.startsWith('0x') ? p.credHash : `0x${p.credHash}`;
+            const value = {
+              credentialHash: formattedHash,
+              issuer: signingWallet.address,
+              nonce: itemNonce,
+              deadline: deadline,
+            };
+
+            const eip712Signature = await signingWallet.signTypedData(domain, types, value);
+
+            anchorResult = await blockchainService.anchorCredentialWithSignature(
+              formattedHash,
+              signingWallet.address,
+              itemNonce,
+              deadline,
+              eip712Signature
+            );
+          } catch (itemBcErr) {
+            anchorResult = {
+              isConfirmed: false,
+              status: 'PENDING_BLOCKCHAIN',
+              reason: itemBcErr.message,
+              transactionHash: null,
+              blockNumber: null,
+              contractAddress: env.CONTRACT_ADDRESS || null,
+              network: 'Ethereum Sepolia',
+            };
+          }
+        }
 
         const cred = await prisma.credential.create({
           data: {
@@ -283,14 +351,14 @@ export class InstitutionController {
             onChainRevocationStatus: 'NOT_REVOKED',
             blockchainAnchor: {
               create: {
-                network: 'Ethereum Sepolia',
-                contractAddress: null,
-                transactionHash: null,
-                blockNumber: null,
+                network: anchorResult.network || 'Ethereum Sepolia',
+                contractAddress: anchorResult.contractAddress,
+                transactionHash: anchorResult.transactionHash,
+                blockNumber: anchorResult.blockNumber,
                 merkleRoot: merkleTree.root,
                 merkleProof: proof,
-                isConfirmed: false,
-                status: 'PENDING_BLOCKCHAIN',
+                isConfirmed: anchorResult.isConfirmed,
+                status: anchorResult.status,
               },
             },
           },

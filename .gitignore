@@ -15,11 +15,17 @@ blockchain/typechain-types/
 
 # Environment variables
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.env
+*.env.*
 frontend/.env
 backend/.env
 blockchain/.env
+
+# Coverage and testing
+coverage/
+.nyc_output/
 
 # Logs
 npm-debug.log*

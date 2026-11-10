@@ -1,7 +1,25 @@
 const path = require("path");
+const fs = require("fs");
 require("@nomicfoundation/hardhat-ethers");
 require("@nomicfoundation/hardhat-chai-matchers");
-require("../backend/node_modules/dotenv").config({ path: path.resolve(__dirname, "../backend/.env") });
+
+// Safely load environment variables without brittle cross-module paths
+try {
+  const dotenv = require("dotenv");
+  const candidates = [
+    path.resolve(__dirname, ".env"),
+    path.resolve(__dirname, "../backend/.env"),
+    path.resolve(__dirname, "../.env"),
+  ];
+  for (const envPath of candidates) {
+    if (fs.existsSync(envPath)) {
+      dotenv.config({ path: envPath });
+      break;
+    }
+  }
+} catch (e) {
+  // Graceful fallback: dotenv is optional for local compile and tests
+}
 
 const SEPOLIA_RPC_URL = process.env.BLOCKCHAIN_RPC_URL || "https://rpc.sepolia.org";
 

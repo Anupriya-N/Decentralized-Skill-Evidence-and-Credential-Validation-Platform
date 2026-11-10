@@ -11,6 +11,7 @@ import {
 } from './utils/crypto.js';
 import { decryptPrivateKey } from './utils/encryption.js';
 import { jobsService } from './services/jobs.service.js';
+import { blockchainService } from './services/blockchain.service.js';
 
 async function runTests() {
   console.log('================================================================');
@@ -266,6 +267,45 @@ async function runTests() {
     });
     assert(employerDl.status === 403, 'Unauthorized user blocked from downloading student evidence (403 Forbidden)');
 
+    // Evidence Approval Enforcement Lifecycle
+    const unapprovedIssue = await request('/api/v1/credentials', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        studentEmail: 'alex.chen@student.edu',
+        evidenceId: uploadedEvidenceId,
+        title: 'Evidence-Linked Credential (Premature)',
+      },
+    });
+    assert(unapprovedIssue.status === 400, 'Issuing credential with unapproved evidence is rejected (400 Bad Request)');
+
+    // Institutional Review & Approval
+    const reviewRes = await request(`/api/v1/evidence/${uploadedEvidenceId}/review`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        status: 'APPROVED',
+        score: 96.0,
+        feedback: 'Verified and approved by Oxford University academic committee.',
+      },
+    });
+    assert(reviewRes.status === 200, 'Institutional evidence review sets status to APPROVED (200 OK)');
+
+    // Credential issuance with officially approved evidence
+    const approvedEvidenceIssue = await request('/api/v1/credentials', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        studentEmail: 'alex.chen@student.edu',
+        evidenceId: uploadedEvidenceId,
+        title: 'Verified Blockchain Security Architect',
+        type: 'CERTIFICATE',
+        badgeLevel: 'GOLD',
+      },
+    });
+    assert(approvedEvidenceIssue.status === 201, 'Issuing credential with approved evidence succeeds (201 Created)');
+    assert(approvedEvidenceIssue.data.data?.metadata?.evidenceId === uploadedEvidenceId, 'Issued credential metadata links evidenceId');
+
     // Document Verification by Content Re-Hash
     const testRehashDoc = path.resolve('test_rehash.pdf');
     fs.writeFileSync(testRehashDoc, Buffer.from(`%PDF-1.4\nUnique rehash test doc ${Date.now()}\n%%EOF`));
@@ -349,6 +389,18 @@ async function runTests() {
 
     // 16. Merkle Tree Batch Credential Issuance & Sibling Proof Verification
     console.log('\n--- 16. Merkle Tree Batch Issuance & Sibling Proofs ---');
+    const batchStudentEmail = `batch.student.${Date.now()}@student.edu`;
+    const batchRegRes = await request('/api/v1/auth/register', {
+      method: 'POST',
+      body: {
+        email: batchStudentEmail,
+        password: 'Password123!',
+        name: 'Batch Candidate 2',
+        role: 'STUDENT',
+      },
+    });
+    assert(batchRegRes.status === 201, 'Registered batch student 2 for multi-recipient issuance');
+
     const batchRes = await request('/api/v1/institutions/batch-issue', {
       method: 'POST',
       headers: { Authorization: `Bearer ${oxfordToken}` },
@@ -363,7 +415,7 @@ async function runTests() {
             courseCode: 'ZK-101',
           },
           {
-            studentEmail: `batch.student.${Date.now()}@student.edu`,
+            studentEmail: batchStudentEmail,
             studentName: 'Batch Candidate 2',
             title: 'Decentralized Consensus Protocols',
             type: 'CERTIFICATE',
@@ -371,11 +423,22 @@ async function runTests() {
             grade: 'Distinction',
             courseCode: 'CONS-201',
           },
+          {
+            studentEmail: 'unregistered.ghost@nowhere.com',
+            studentName: 'Ghost Student',
+            title: 'Ghost In The Shell',
+            type: 'CERTIFICATE',
+            badgeLevel: 'BRONZE',
+            grade: 'Fail',
+            courseCode: 'GHOST-001',
+          },
         ],
       },
     });
     assert(batchRes.status === 201, 'POST /institutions/batch-issue returns 201 Created');
-    assert(batchRes.data.data?.count === 2, 'Batch issue created 2 credentials');
+    assert(batchRes.data.data?.count === 2, 'Batch issue created 2 successful credentials');
+    assert(batchRes.data.data?.failedCount === 1, 'Batch issue recorded 1 failed item for unregistered student');
+    assert(Array.isArray(batchRes.data.data?.failures) && batchRes.data.data.failures.length === 1, 'Failed items details returned in response');
     const batchRoot = batchRes.data.data?.batchMerkleRoot;
     assert(Boolean(batchRoot), 'Batch Merkle root is calculated and returned');
 
@@ -499,6 +562,17 @@ async function runTests() {
     assert(jobStats.tokens?.cleanedCount !== undefined, 'Expired token cleanup reports execution stats');
     assert(jobStats.credentials?.expiredCount !== undefined, 'Expired credentials check reports execution stats');
     assert(jobStats.anchors?.reconciledCount !== undefined, 'Pending blockchain anchor reconciliation reports execution stats');
+
+    // 23. Nonce Retrieval Error Handling
+    console.log('\n--- 23. Nonce Retrieval Error Handling ---');
+    let nonceErrorCaught = false;
+    try {
+      await blockchainService.getNonce('0xInvalidEthereumAddress');
+    } catch (err) {
+      nonceErrorCaught = true;
+      assert(err.message.includes('Invalid address format'), `getNonce with invalid address throws expected validation error: ${err.message}`);
+    }
+    assert(nonceErrorCaught === true, 'getNonce strictly rejects invalid address strings without silent fallback to 0');
 
     console.log('\n================================================================');
     console.log(`📊 Test Results: ${passed} passed, ${failed} failed`);
