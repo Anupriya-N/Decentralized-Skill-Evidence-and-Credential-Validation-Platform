@@ -25,6 +25,7 @@ export class CredentialController {
       const {
         studentId,
         studentEmail,
+        evidenceId,
         title,
         description,
         type = 'CERTIFICATE',
@@ -61,6 +62,26 @@ export class CredentialController {
 
       if (student.role !== 'STUDENT') {
         throw new BadRequestError('Credentials can only be assigned to accounts with the STUDENT role');
+      }
+
+      // Validate referenced evidence artifact if provided (Institutional Review & Approval Enforcement)
+      let referencedEvidence = null;
+      if (evidenceId) {
+        referencedEvidence = await prisma.evidence.findUnique({
+          where: { id: evidenceId },
+        });
+
+        if (!referencedEvidence) {
+          throw new NotFoundError('Referenced evidence artifact not found');
+        }
+
+        if (referencedEvidence.studentId !== student.id) {
+          throw new BadRequestError('Referenced evidence artifact does not belong to the target student');
+        }
+
+        if (referencedEvidence.status !== 'APPROVED') {
+          throw new BadRequestError('Evidence must be officially approved by an authorized institution before issuing credentials');
+        }
       }
 
       // 3. Security: Issuers cannot issue credentials to themselves
@@ -124,8 +145,64 @@ export class CredentialController {
       const { signature } = await signCredentialPayload(normalizedPayload, cleanKey);
       const merkleRoot = computeMerkleRoot([credentialHash]);
 
-      // 8. Genuine Blockchain Anchor Submission (nullable for pending, no fake hashes)
-      const anchorResult = await blockchainService.anchorCredential(credentialHash, signingWallet.address);
+      // 8. Genuine Blockchain Anchor Submission via institutional EIP-712 authorization
+      let anchorResult = {
+        isConfirmed: false,
+        status: 'PENDING_BLOCKCHAIN',
+        transactionHash: null,
+        blockNumber: null,
+        contractAddress: env.CONTRACT_ADDRESS || null,
+        network: 'Ethereum Sepolia',
+      };
+
+      try {
+        const nonce = await blockchainService.getNonce(signingWallet.address);
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+        const domain = {
+          name: 'CertiTrustAnchor',
+          version: '1',
+          chainId: env.CHAIN_ID,
+          verifyingContract: env.CONTRACT_ADDRESS,
+        };
+
+        const types = {
+          IssueAuthorization: [
+            { name: 'credentialHash', type: 'bytes32' },
+            { name: 'issuer', type: 'address' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'deadline', type: 'uint256' },
+          ],
+        };
+
+        const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+        const value = {
+          credentialHash: formattedHash,
+          issuer: signingWallet.address,
+          nonce: nonce,
+          deadline: deadline,
+        };
+
+        const eip712Signature = await signingWallet.signTypedData(domain, types, value);
+
+        anchorResult = await blockchainService.anchorCredentialWithSignature(
+          formattedHash,
+          signingWallet.address,
+          nonce,
+          deadline,
+          eip712Signature
+        );
+      } catch (bcError) {
+        anchorResult = {
+          isConfirmed: false,
+          status: 'PENDING_BLOCKCHAIN',
+          reason: bcError.message,
+          transactionHash: null,
+          blockNumber: null,
+          contractAddress: env.CONTRACT_ADDRESS || null,
+          network: 'Ethereum Sepolia',
+        };
+      }
 
       // 9. Store in PostgreSQL
       const credential = await prisma.credential.create({
@@ -146,6 +223,14 @@ export class CredentialController {
           expiresAt: expiresAt ? new Date(expiresAt) : null,
           qrCodeUrl: `${env.FRONTEND_URL}/verify/${certNumber}`,
           onChainRevocationStatus: 'NOT_REVOKED',
+          metadata: referencedEvidence
+            ? {
+                evidenceId: referencedEvidence.id,
+                evidenceTitle: referencedEvidence.title,
+                evidenceHash: referencedEvidence.sha256Hash,
+                evidenceType: referencedEvidence.evidenceType,
+              }
+            : undefined,
           blockchainAnchor: {
             create: {
               network: anchorResult.network || 'Ethereum Sepolia',
@@ -269,16 +354,77 @@ export class CredentialController {
         throw new ForbiddenError('Only the issuing institution or an administrator can revoke this credential');
       }
 
-      // Attempt on-chain revocation
+      // Attempt on-chain revocation using institutional EIP-712 authorization if available
       let onChainRevocationStatus = 'REVOKE_PENDING';
       let onChainRevocationTx = null;
 
       if (credential.credentialHash) {
-        const onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
-        if (onChainResult.success) {
-          onChainRevocationStatus = 'REVOKE_CONFIRMED';
-          onChainRevocationTx = onChainResult.transactionHash;
-        } else {
+        try {
+          let institutionalKey = null;
+          const encryptedKey = req.user.rawUser?.institutionProfile?.encryptedSigningKey;
+          if (encryptedKey) {
+            institutionalKey = decryptPrivateKey(encryptedKey);
+          }
+          if (!institutionalKey && process.env.INSTITUTION_SIGNING_KEY) {
+            institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
+          }
+
+          if (institutionalKey && institutionalKey.length >= 64) {
+            const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
+            const signingWallet = new ethers.Wallet(cleanKey);
+            const nonce = await blockchainService.getNonce(signingWallet.address);
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+            const domain = {
+              name: 'CertiTrustAnchor',
+              version: '1',
+              chainId: env.CHAIN_ID,
+              verifyingContract: env.CONTRACT_ADDRESS,
+            };
+
+            const types = {
+              RevokeAuthorization: [
+                { name: 'credentialHash', type: 'bytes32' },
+                { name: 'issuer', type: 'address' },
+                { name: 'nonce', type: 'uint256' },
+                { name: 'deadline', type: 'uint256' },
+              ],
+            };
+
+            const formattedHash = credential.credentialHash.startsWith('0x')
+              ? credential.credentialHash
+              : `0x${credential.credentialHash}`;
+
+            const value = {
+              credentialHash: formattedHash,
+              issuer: signingWallet.address,
+              nonce: nonce,
+              deadline: deadline,
+            };
+
+            const signature = await signingWallet.signTypedData(domain, types, value);
+
+            const onChainResult = await blockchainService.revokeOnChainWithSignature(
+              formattedHash,
+              signingWallet.address,
+              nonce,
+              deadline,
+              signature
+            );
+
+            if (onChainResult.success) {
+              onChainRevocationStatus = 'REVOKE_CONFIRMED';
+              onChainRevocationTx = onChainResult.transactionHash;
+            }
+          } else {
+            // Admin fallback direct revocation (contract owner)
+            const onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
+            if (onChainResult.success) {
+              onChainRevocationStatus = 'REVOKE_CONFIRMED';
+              onChainRevocationTx = onChainResult.transactionHash;
+            }
+          }
+        } catch {
           onChainRevocationStatus = 'REVOKE_PENDING';
         }
       }
@@ -346,6 +492,22 @@ export class CredentialController {
           success: true,
           message: 'On-chain revocation is already confirmed',
           data: credential,
+        });
+      }
+
+      // Live on-chain readback check before transaction submission
+      const onChainStatus = await blockchainService.verifyOnChain(credential.credentialHash);
+      if (onChainStatus.checked && onChainStatus.revoked) {
+        const updated = await prisma.credential.update({
+          where: { id: credential.id },
+          data: {
+            onChainRevocationStatus: 'REVOKE_CONFIRMED',
+          },
+        });
+        return res.status(200).json({
+          success: true,
+          message: 'On-chain revocation confirmed via live blockchain verification',
+          data: updated,
         });
       }
 

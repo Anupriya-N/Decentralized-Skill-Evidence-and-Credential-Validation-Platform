@@ -376,6 +376,48 @@ describe("CertiTrustAnchor Smart Contract", function () {
     ).to.be.revertedWith("CertiTrust: signer is not the original credential issuer");
   });
 
+  // Deauthorized Issuer Rejection
+  it("Should reject relayed registration if issuer has been deauthorized", async function () {
+    await anchor.authorizeIssuer(issuer.address);
+    await anchor.deauthorizeIssuer(issuer.address);
+
+    const nonce = await anchor.nonces(issuer.address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    const domain = {
+      name: "CertiTrustAnchor",
+      version: "1",
+      chainId: chainId,
+      verifyingContract: contractAddress,
+    };
+
+    const types = {
+      IssueAuthorization: [
+        { name: "credentialHash", type: "bytes32" },
+        { name: "issuer", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const signature = await issuer.signTypedData(domain, types, {
+      credentialHash: sampleHash,
+      issuer: issuer.address,
+      nonce: Number(nonce),
+      deadline: deadline,
+    });
+
+    await expect(
+      anchor.connect(relayer).registerCredentialWithSignature(
+        sampleHash,
+        issuer.address,
+        nonce,
+        deadline,
+        signature
+      )
+    ).to.be.revertedWith("CertiTrust: signer is not an authorized issuer");
+  });
+
   // Ownership Transfer Tests
   describe("Ownership Transfer Lifecycle", function () {
     it("Owner can transfer ownership to a new address", async function () {

@@ -148,8 +148,10 @@ export class InstitutionController {
         );
       }
 
-      // Phase 1: Prepare normalized payloads and hashes
+      // Phase 1: Prepare normalized payloads and hashes with strict validation (No fake placeholder accounts)
       const preparedItems = [];
+      const failures = [];
+
       for (const item of items) {
         let student = await prisma.user.findFirst({
           where: {
@@ -160,24 +162,64 @@ export class InstitutionController {
           },
         });
 
-        if (!student && item.studentEmail) {
-          student = await prisma.user.create({
-            data: {
-              email: item.studentEmail.toLowerCase(),
-              name: item.studentName || item.studentEmail.split('@')[0],
-              passwordHash: 'placeholder-needs-reset',
-              role: 'STUDENT',
-              studentProfile: {
-                create: {
-                  portfolioSlug: item.studentEmail.split('@')[0] + '-' + Math.floor(100 + Math.random() * 900),
-                },
-              },
-            },
+        if (!student) {
+          failures.push({
+            studentEmail: item.studentEmail,
+            studentId: item.studentId,
+            title: item.title,
+            reason: 'Student account not found on platform. Unregistered users cannot be issued credentials.',
           });
+          continue;
         }
 
-        if (!student || student.role !== 'STUDENT' || student.id === issuerId) {
-          continue; // Skip non-students or self-issuance
+        if (student.role !== 'STUDENT') {
+          failures.push({
+            studentEmail: item.studentEmail,
+            studentId: item.studentId,
+            title: item.title,
+            reason: 'Target recipient account is not a registered STUDENT.',
+          });
+          continue;
+        }
+
+        if (student.id === issuerId) {
+          failures.push({
+            studentEmail: item.studentEmail,
+            studentId: item.studentId,
+            title: item.title,
+            reason: 'Institutions cannot issue credentials to themselves.',
+          });
+          continue;
+        }
+
+        if (item.evidenceId) {
+          const evidence = await prisma.evidence.findUnique({
+            where: { id: item.evidenceId },
+          });
+          if (!evidence) {
+            failures.push({
+              studentEmail: item.studentEmail,
+              title: item.title,
+              reason: 'Referenced evidence artifact not found.',
+            });
+            continue;
+          }
+          if (evidence.studentId !== student.id) {
+            failures.push({
+              studentEmail: item.studentEmail,
+              title: item.title,
+              reason: 'Referenced evidence artifact does not belong to the student recipient.',
+            });
+            continue;
+          }
+          if (evidence.status !== 'APPROVED') {
+            failures.push({
+              studentEmail: item.studentEmail,
+              title: item.title,
+              reason: 'Referenced evidence must be officially approved before credential issuance.',
+            });
+            continue;
+          }
         }
 
         const certNum = generateCertificateNumber('INST', item.courseCode || 'GEN');
@@ -210,7 +252,7 @@ export class InstitutionController {
       }
 
       if (preparedItems.length === 0) {
-        throw new BadRequestError('No valid student recipients found in batch');
+        throw new BadRequestError('No valid student recipients found in batch. Unregistered or invalid entries were rejected.');
       }
 
       // Phase 2: Compute Merkle Tree for batch
@@ -262,11 +304,13 @@ export class InstitutionController {
 
       res.status(201).json({
         success: true,
-        message: `Successfully issued ${created.length} credentials with Merkle batch root ${merkleTree.root}`,
+        message: `Successfully issued ${created.length} credentials with Merkle batch root ${merkleTree.root}${failures.length > 0 ? ` (${failures.length} items skipped/rejected)` : ''}`,
         data: {
           count: created.length,
+          failedCount: failures.length,
           batchMerkleRoot: merkleTree.root,
           credentials: created,
+          failures,
         },
       });
     } catch (error) {
