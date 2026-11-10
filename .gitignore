@@ -18,21 +18,30 @@ blockchain/typechain-types/
 .env.*
 !.env.example
 *.env
-*.env.*
 frontend/.env
 backend/.env
 blockchain/.env
+
+# Python Automation & Virtual Environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+playwright-report/
 
 # Coverage and testing
 coverage/
 .nyc_output/
 
-# Logs
+# Logs & Temporary Uploads
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+backend/uploads/temp/
 
 # Editor & System Files
 .vscode/
@@ -44,7 +53,4 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-*.md
-!README.md
-
-/md
+md/

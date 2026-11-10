@@ -94,6 +94,7 @@ export const Sidebar = ({ isOpen, onClose }) => {
 
       {/* Sidebar container */}
       <aside
+        data-testid="sidebar"
         className={`fixed lg:sticky top-0 lg:top-16 left-0 h-screen lg:h-[calc(100vh-4rem)] w-64 bg-navy-950 text-slate-300 flex flex-col z-40 transition-transform duration-200 ease-in-out border-r border-navy-800 shrink-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}

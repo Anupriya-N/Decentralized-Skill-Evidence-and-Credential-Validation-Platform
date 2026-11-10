@@ -121,7 +121,7 @@ export const LoginPage = () => {
           <Card className="p-6">
             <form onSubmit={handleLogin} className="space-y-4">
               {error && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">
+                <div data-testid="login-error" className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">
                   {error}
                 </div>
               )}
@@ -131,6 +131,7 @@ export const LoginPage = () => {
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    data-testid="login-email"
                     type="email"
                     required
                     value={email}
@@ -151,6 +152,7 @@ export const LoginPage = () => {
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    data-testid="login-password"
                     type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
@@ -168,7 +170,7 @@ export const LoginPage = () => {
                 </div>
               </div>
 
-              <Button type="submit" variant="primary" className="w-full" isLoading={loading}>
+              <Button data-testid="login-submit" type="submit" variant="primary" className="w-full" isLoading={loading}>
                 Sign In
               </Button>
             </form>

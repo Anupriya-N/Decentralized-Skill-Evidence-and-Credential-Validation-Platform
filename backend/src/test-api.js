@@ -570,7 +570,7 @@ async function runTests() {
       await blockchainService.getNonce('0xInvalidEthereumAddress');
     } catch (err) {
       nonceErrorCaught = true;
-      assert(err.message.includes('Invalid address format'), `getNonce with invalid address throws expected validation error: ${err.message}`);
+      assert(err.message.includes('Invalid issuer address'), `getNonce with invalid address throws expected validation error: ${err.message}`);
     }
     assert(nonceErrorCaught === true, 'getNonce strictly rejects invalid address strings without silent fallback to 0');
 

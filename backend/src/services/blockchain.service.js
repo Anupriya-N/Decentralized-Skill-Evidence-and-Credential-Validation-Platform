@@ -440,7 +440,7 @@ export class BlockchainService {
     try {
       // Verify that relayer wallet is the contract owner
       const ownerAddress = await this.contract.owner();
-      const relayerAddress = await this.wallet.getAddress();
+      const relayerAddress = await this.signer.getAddress();
       if (ownerAddress.toLowerCase() !== relayerAddress.toLowerCase()) {
         return {
           success: false,

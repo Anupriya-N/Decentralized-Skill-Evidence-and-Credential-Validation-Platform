@@ -95,7 +95,7 @@ export const RegisterPage = () => {
 
             <form onSubmit={handleRegister} className="space-y-4">
               {error && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">
+                <div data-testid="register-error" className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">
                   {error}
                 </div>
               )}
@@ -105,6 +105,7 @@ export const RegisterPage = () => {
                 <div className="relative">
                   <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    data-testid="register-name"
                     type="text"
                     required
                     value={fullName}
@@ -120,6 +121,7 @@ export const RegisterPage = () => {
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    data-testid="register-email"
                     type="email"
                     required
                     value={email}
@@ -135,6 +137,7 @@ export const RegisterPage = () => {
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
+                    data-testid="register-password"
                     type="password"
                     required
                     value={password}
@@ -219,7 +222,7 @@ export const RegisterPage = () => {
                 </>
               )}
 
-              <Button type="submit" variant="primary" className="w-full" isLoading={loading}>
+              <Button data-testid="register-submit" type="submit" variant="primary" className="w-full" isLoading={loading}>
                 Complete Registration
               </Button>
             </form>

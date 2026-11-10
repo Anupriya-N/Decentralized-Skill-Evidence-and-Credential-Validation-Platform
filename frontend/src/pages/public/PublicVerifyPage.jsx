@@ -88,6 +88,7 @@ export const PublicVerifyPage = () => {
               <div className="relative flex-1">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
+                  data-testid="verification-input"
                   type="text"
                   value={inputCredId}
                   onChange={(e) => setInputCredId(e.target.value)}
@@ -95,7 +96,7 @@ export const PublicVerifyPage = () => {
                   className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 font-mono"
                 />
               </div>
-              <Button type="submit" variant="primary" icon={Search} isLoading={loading}>
+              <Button data-testid="verification-submit" type="submit" variant="primary" icon={Search} isLoading={loading}>
                 Run Verification
               </Button>
             </div>

@@ -67,7 +67,7 @@ export const ValidationRequestsPage = () => {
         </p>
       </div>
 
-      <div className="space-y-4">
+      <div data-testid="evidence-list" className="space-y-4">
         {validationRequests.length === 0 ? (
           <Card className="p-8 text-center text-slate-500 text-xs">
             No validation requests in the queue.
@@ -78,7 +78,9 @@ export const ValidationRequestsPage = () => {
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-sm text-slate-900">{req.credentialTitle}</span>
-                  <Badge status={req.status} size="sm" />
+                  <div data-testid="evidence-status">
+                    <Badge status={req.status} size="sm" />
+                  </div>
                 </div>
                 <p className="text-xs text-slate-600">
                   Claimant: <strong className="text-slate-800">{req.studentName}</strong> • Submitted: {req.submittedDate}
@@ -113,6 +115,7 @@ export const ValidationRequestsPage = () => {
                 {req.status === 'pending' ? (
                   <>
                     <Button 
+                      data-testid="evidence-approve"
                       variant="primary" 
                       size="sm" 
                       icon={Check} 
@@ -122,6 +125,7 @@ export const ValidationRequestsPage = () => {
                       Approve Claim
                     </Button>
                     <Button
+                      data-testid="evidence-reject"
                       variant="danger"
                       size="sm"
                       icon={X}

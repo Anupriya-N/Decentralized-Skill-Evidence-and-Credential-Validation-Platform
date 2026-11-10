@@ -10,6 +10,7 @@ import {
 import { decryptPrivateKey } from '../utils/encryption.js';
 import { env } from '../config/env.js';
 import { ethers } from 'ethers';
+import { blockchainService } from '../services/blockchain.service.js';
 
 export class InstitutionController {
   /**

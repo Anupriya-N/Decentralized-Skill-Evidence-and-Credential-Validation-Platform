@@ -181,6 +181,7 @@ export const Navbar = ({ onToggleSidebar, isSidebarOpen }) => {
 
                 <div className="border-t border-slate-100 pt-1">
                   <button
+                    data-testid="logout-button"
                     onClick={() => {
                       setShowProfileMenu(false);
                       logout();

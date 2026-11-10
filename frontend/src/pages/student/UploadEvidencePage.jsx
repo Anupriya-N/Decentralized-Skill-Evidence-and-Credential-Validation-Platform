@@ -285,6 +285,7 @@ export const UploadEvidencePage = () => {
           className="border-2 border-dashed border-slate-300 hover:border-brand-500 rounded-2xl p-6 text-center transition-colors bg-slate-50/50 cursor-pointer"
         >
           <input
+            data-testid="evidence-upload-input"
             type="file"
             id="evidence-file-input"
             className="hidden"
@@ -609,6 +610,7 @@ export const UploadEvidencePage = () => {
           </Button>
 
           <Button
+            data-testid="evidence-submit"
             type="submit"
             variant="primary"
             size="lg"

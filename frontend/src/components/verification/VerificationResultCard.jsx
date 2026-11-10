@@ -172,7 +172,7 @@ export const VerificationResultCard = ({ result }) => {
   ];
 
   return (
-    <div className="space-y-6">
+    <div data-testid="verification-result" className="space-y-6">
       {/* Overall Result Banner */}
       <div className={`p-5 rounded-2xl border ${bannerColor}`}>
         <div className="flex items-start gap-4">
@@ -184,7 +184,9 @@ export const VerificationResultCard = ({ result }) => {
               <h2 className="text-lg font-extrabold tracking-tight">
                 {bannerHeadline}
               </h2>
-              <Badge status={normalizedResultState} size="lg" />
+              <div data-testid="verification-status">
+                <Badge status={normalizedResultState} size="lg" />
+              </div>
             </div>
             <p className="text-xs mt-1.5 opacity-90 leading-relaxed">
               {bannerMessage}

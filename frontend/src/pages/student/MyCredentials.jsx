@@ -139,7 +139,7 @@ export const MyCredentials = () => {
           </Link>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div data-testid="credential-list" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredCredentials.map(cred => (
             <CredentialCard
               key={cred.id}

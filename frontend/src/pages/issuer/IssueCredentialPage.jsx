@@ -166,7 +166,7 @@ export const IssueCredentialPage = () => {
             <Button type="button" variant="secondary" onClick={() => navigate('/issuer/credentials')}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" icon={Boxes} isLoading={submitting}>
+            <Button data-testid="credential-issue" type="submit" variant="primary" icon={Boxes} isLoading={submitting}>
               Issue & Register Proof
             </Button>
           </div>

@@ -77,6 +77,7 @@ export const IssuedCredentialsPage = () => {
                     </Link>
                     {cred.credentialStatus === 'active' && (
                       <Button
+                        data-testid="revocation-button"
                         variant="danger"
                         size="sm"
                         onClick={() => setRevokingCred(cred)}
@@ -113,6 +114,7 @@ export const IssuedCredentialsPage = () => {
                 Official Reason for Revocation <span className="text-rose-500">*</span>
               </label>
               <textarea
+                data-testid="revocation-reason"
                 required
                 rows={3}
                 value={revokeReason}
@@ -126,7 +128,7 @@ export const IssuedCredentialsPage = () => {
               <Button variant="secondary" size="sm" type="button" onClick={() => setRevokingCred(null)}>
                 Cancel
               </Button>
-              <Button variant="danger" size="sm" type="submit" isLoading={revokingLoading}>
+              <Button data-testid="revocation-confirm" variant="danger" size="sm" type="submit" isLoading={revokingLoading}>
                 Confirm Revocation
               </Button>
             </div>

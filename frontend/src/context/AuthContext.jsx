@@ -11,7 +11,7 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     setLoading(true);
     try {
-      const loggedIn = authService.login(email, password);
+      const loggedIn = await authService.login(email, password);
       setUser(loggedIn);
       toast.success(`Welcome back, ${loggedIn.fullName}!`);
       return loggedIn;
@@ -26,7 +26,7 @@ export const AuthProvider = ({ children }) => {
   const register = async (userData) => {
     setLoading(true);
     try {
-      const newUser = authService.register(userData);
+      const newUser = await authService.register(userData);
       setUser(newUser);
       toast.success(`Account created successfully as ${newUser.role}!`);
       return newUser;
@@ -38,8 +38,8 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    authService.logout();
+  const logout = async () => {
+    await authService.logout();
     setUser(null);
     toast.success('Logged out successfully.');
   };

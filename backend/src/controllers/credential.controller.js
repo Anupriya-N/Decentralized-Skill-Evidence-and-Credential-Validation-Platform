@@ -522,53 +522,61 @@ export class CredentialController {
         institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
       }
 
-      if (institutionalKey && institutionalKey.length >= 64) {
-        const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
-        const signingWallet = new ethers.Wallet(cleanKey);
-        const nonce = await blockchainService.getNonce(signingWallet.address);
-        const deadline = Math.floor(Date.now() / 1000) + 3600;
+      try {
+        if (institutionalKey && institutionalKey.length >= 64) {
+          const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
+          const signingWallet = new ethers.Wallet(cleanKey);
+          const nonce = await blockchainService.getNonce(signingWallet.address);
+          const deadline = Math.floor(Date.now() / 1000) + 3600;
 
-        const domain = {
-          name: 'CertiTrustAnchor',
-          version: '1',
-          chainId: env.CHAIN_ID,
-          verifyingContract: env.CONTRACT_ADDRESS,
-        };
+          const domain = {
+            name: 'CertiTrustAnchor',
+            version: '1',
+            chainId: env.CHAIN_ID,
+            verifyingContract: env.CONTRACT_ADDRESS,
+          };
 
-        const types = {
-          RevokeAuthorization: [
-            { name: 'credentialHash', type: 'bytes32' },
-            { name: 'issuer', type: 'address' },
-            { name: 'nonce', type: 'uint256' },
-            { name: 'deadline', type: 'uint256' },
-          ],
-        };
+          const types = {
+            RevokeAuthorization: [
+              { name: 'credentialHash', type: 'bytes32' },
+              { name: 'issuer', type: 'address' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'deadline', type: 'uint256' },
+            ],
+          };
 
-        const formattedHash = credential.credentialHash.startsWith('0x')
-          ? credential.credentialHash
-          : `0x${credential.credentialHash}`;
+          const formattedHash = credential.credentialHash.startsWith('0x')
+            ? credential.credentialHash
+            : `0x${credential.credentialHash}`;
 
-        const value = {
-          credentialHash: formattedHash,
-          issuer: signingWallet.address,
-          nonce: nonce,
-          deadline: deadline,
-        };
+          const value = {
+            credentialHash: formattedHash,
+            issuer: signingWallet.address,
+            nonce: nonce,
+            deadline: deadline,
+          };
 
-        const signature = await signingWallet.signTypedData(domain, types, value);
+          const signature = await signingWallet.signTypedData(domain, types, value);
 
-        onChainResult = await blockchainService.revokeOnChainWithSignature(
-          formattedHash,
-          signingWallet.address,
-          nonce,
-          deadline,
-          signature
-        );
-      } else if (req.user.role === 'ADMIN') {
-        // Admin fallback direct revocation (verifies owner on-chain)
-        onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
-      } else {
-        throw new BadRequestError('Institutional signing key required to authorize on-chain revocation relay');
+          onChainResult = await blockchainService.revokeOnChainWithSignature(
+            formattedHash,
+            signingWallet.address,
+            nonce,
+            deadline,
+            signature
+          );
+        } else if (req.user.role === 'ADMIN') {
+          // Admin fallback direct revocation (verifies owner on-chain)
+          onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
+        } else {
+          throw new BadRequestError('Institutional signing key required to authorize on-chain revocation relay');
+        }
+      } catch (err) {
+        return res.status(503).json({
+          success: false,
+          error: `Blockchain node error during reconciliation: ${err.message}`,
+          status: 'REVOKE_PENDING',
+        });
       }
 
       if (!onChainResult.success) {

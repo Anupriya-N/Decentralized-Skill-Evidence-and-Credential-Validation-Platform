@@ -4,22 +4,23 @@ import { authenticate } from '../middleware/auth.middleware.js';
 import { validateRequest } from '../middleware/validate.middleware.js';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { env } from '../config/env.js';
 
 const router = Router();
 
-// Strict login brute-force limiter (max 10 attempts per 15 minutes)
+// Strict login brute-force limiter (max 10 attempts per 15 minutes in production)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: env.NODE_ENV === 'production' ? 10 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many login attempts. Please wait 15 minutes before trying again.' },
 });
 
-// Strict password reset rate limiter (max 5 attempts per 15 minutes)
+// Strict password reset rate limiter (max 5 attempts per 15 minutes in production)
 const passwordResetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: env.NODE_ENV === 'production' ? 5 : 500,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many password reset attempts. Please wait 15 minutes.' },

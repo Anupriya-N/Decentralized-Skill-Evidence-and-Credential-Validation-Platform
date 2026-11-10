@@ -58,14 +58,14 @@ export const StudentDashboard = () => {
   const COLORS = ['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
 
   return (
-    <div className="space-y-6">
+    <div data-testid="dashboard-container" className="space-y-6">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-navy-900 via-navy-800 to-brand-900 rounded-2xl p-6 text-white shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <span className="text-brand-300 text-xs font-semibold uppercase tracking-wider">
             Student Credential Portfolio
           </span>
-          <h1 className="text-2xl font-extrabold mt-1">Welcome back, {user?.fullName}!</h1>
+          <h1 data-testid="dashboard-title" className="text-2xl font-extrabold mt-1">Welcome back, {user?.fullName}!</h1>
           <p className="text-xs text-slate-300 mt-1 max-w-xl">
             {user?.department} • {user?.college}. Manage your cryptographic proof records and skill evidence.
           </p>
@@ -85,7 +85,7 @@ export const StudentDashboard = () => {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div data-testid="dashboard-statistics" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-4 border-l-4 border-l-brand-500">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Total Uploads</span>

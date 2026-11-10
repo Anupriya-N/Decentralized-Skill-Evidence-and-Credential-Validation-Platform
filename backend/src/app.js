@@ -63,7 +63,7 @@ app.use(
 // Global Rate Limiting
 const limiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.RATE_LIMIT_MAX,
+  max: env.NODE_ENV === 'production' ? env.RATE_LIMIT_MAX : 5000,
   message: { success: false, message: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,

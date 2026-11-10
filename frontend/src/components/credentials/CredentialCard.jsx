@@ -15,11 +15,11 @@ export const CredentialCard = ({ credential, onRevoke, showActions = true, isStu
 
   return (
     <>
-      <Card hoverEffect className="flex flex-col justify-between h-full group">
+      <Card data-testid="credential-card" hoverEffect className="flex flex-col justify-between h-full group">
         <div className="space-y-4">
           {/* Header badges */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <span className="text-[11px] font-mono text-slate-500 font-semibold">
+            <span data-testid="credential-id" className="text-[11px] font-mono text-slate-500 font-semibold">
               {credential.credentialId}
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -92,7 +92,7 @@ export const CredentialCard = ({ credential, onRevoke, showActions = true, isStu
             </Button>
 
             <div className="flex items-center gap-2">
-              <Link to={`/verify/${credential.credentialId}`}>
+              <Link data-testid="credential-verify" to={`/verify/${credential.credentialId}`}>
                 <Button variant="ghost" size="sm" icon={ExternalLink}>
                   Verify
                 </Button>

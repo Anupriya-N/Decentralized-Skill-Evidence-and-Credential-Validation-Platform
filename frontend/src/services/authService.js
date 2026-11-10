@@ -1,11 +1,67 @@
-import { storageService } from './storageService';
+import { apiClient } from './apiClient.js';
+import { storageService } from './storageService.js';
+
+// Role mappings between backend and frontend
+export const ROLE_MAP_TO_FRONTEND = {
+  STUDENT: 'student',
+  INSTITUTION: 'issuer',
+  EMPLOYER: 'recruiter',
+  ADMIN: 'admin',
+};
+
+export const ROLE_MAP_TO_BACKEND = {
+  student: 'STUDENT',
+  issuer: 'INSTITUTION',
+  recruiter: 'EMPLOYER',
+  admin: 'ADMIN',
+};
+
+function normalizeBackendUser(user) {
+  if (!user) return null;
+  const frontendRole = ROLE_MAP_TO_FRONTEND[user.role] || user.role?.toLowerCase() || 'student';
+  return {
+    id: user.id,
+    fullName: user.name || user.fullName || user.email?.split('@')[0] || 'User',
+    email: user.email,
+    role: frontendRole,
+    rawRole: user.role,
+    college: user.studentProfile?.enrollmentNumber || user.college || '',
+    department: user.department || '',
+    bio: user.bio || '',
+    profileImage: user.profileImage || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
+    accountStatus: user.isActive !== false ? 'active' : 'suspended',
+    createdAt: user.createdAt || new Date().toISOString(),
+    updatedAt: user.updatedAt || new Date().toISOString(),
+    isPortfolioPublic: true
+  };
+}
 
 export const authService = {
   getCurrentUser() {
     return storageService.getCurrentUser();
   },
 
-  login(email, password) {
+  async login(email, password) {
+    try {
+      // First attempt real live API login
+      const res = await apiClient.post('/auth/login', { email, password });
+      if (res && res.data && res.data.accessToken) {
+        apiClient.setToken(res.data.accessToken);
+        if (res.data.refreshToken && typeof localStorage !== 'undefined') {
+          localStorage.setItem('certitrust_refresh_token', res.data.refreshToken);
+        }
+        const normalized = normalizeBackendUser(res.data.user);
+        storageService.setCurrentUser(normalized);
+        return normalized;
+      }
+    } catch (apiErr) {
+      if (apiErr.status && apiErr.status < 500) {
+        throw new Error(apiErr.data?.message || apiErr.data?.error || apiErr.message || 'Invalid credentials.');
+      }
+      console.warn('[authService] Backend API not reachable. Checking local prototype store:', apiErr.message);
+    }
+
+    // Local prototype fallback
     const users = storageService.getUsers();
     const user = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
     if (!user) {
@@ -21,7 +77,36 @@ export const authService = {
     return user;
   },
 
-  register(userData) {
+  async register(userData) {
+    const backendRole = ROLE_MAP_TO_BACKEND[userData.role] || 'STUDENT';
+    const payload = {
+      email: userData.email,
+      password: userData.password,
+      name: userData.fullName,
+      role: backendRole,
+      institutionName: userData.organizationName || userData.fullName,
+      companyName: userData.companyName || userData.fullName,
+    };
+
+    try {
+      const res = await apiClient.post('/auth/register', payload);
+      if (res && res.data && res.data.accessToken) {
+        apiClient.setToken(res.data.accessToken);
+        if (res.data.refreshToken && typeof localStorage !== 'undefined') {
+          localStorage.setItem('certitrust_refresh_token', res.data.refreshToken);
+        }
+        const normalized = normalizeBackendUser(res.data.user);
+        storageService.setCurrentUser(normalized);
+        return normalized;
+      }
+    } catch (apiErr) {
+      if (apiErr.status && apiErr.status < 500) {
+        throw new Error(apiErr.data?.message || apiErr.data?.error || apiErr.message || 'Registration failed.');
+      }
+      console.warn('[authService] Backend API not reachable during register. Utilizing local fallback:', apiErr.message);
+    }
+
+    // Local prototype fallback
     const users = storageService.getUsers();
     const existing = users.find(u => u.email.toLowerCase() === userData.email.trim().toLowerCase());
     if (existing) {
@@ -48,7 +133,6 @@ export const authService = {
     storageService.setUsers(updatedUsers);
     storageService.setCurrentUser(newUser);
 
-    // If an issuer registers, create an issuer application entry
     if (newUser.role === 'issuer') {
       const issuers = storageService.getIssuers();
       const newIssuer = {
@@ -72,10 +156,15 @@ export const authService = {
     return newUser;
   },
 
-  logout() {
-    // For demo purposes, we can clear current user or default to null
-    // But to keep demo smooth, let's keep session clean
-    localStorage.removeItem('certitrust_current_user_v1');
+  async logout() {
+    try {
+      await apiClient.post('/auth/logout', {});
+    } catch (_) {}
+    apiClient.setToken(null);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('certitrust_refresh_token');
+      localStorage.removeItem('certitrust_current_user_v1');
+    }
     return true;
   },
 
