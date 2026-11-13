@@ -105,7 +105,7 @@ export class AdminController {
   async updateAccreditation(req, res, next) {
     try {
       const { id } = req.params;
-      const { isAccredited, accreditationBody, accreditationNumber } = req.body;
+      const { isAccredited, accreditationBody, accreditationNumber, signingPublicKey, walletAddress } = req.body;
 
       const profile = await prisma.institutionProfile.findFirst({
         where: {
@@ -123,8 +123,16 @@ export class AdminController {
           isAccredited: Boolean(isAccredited),
           ...(accreditationBody && { accreditationBody }),
           ...(accreditationNumber && { accreditationNumber }),
+          ...(signingPublicKey && { signingPublicKey }),
         },
       });
+
+      if (walletAddress) {
+        await prisma.user.update({
+          where: { id: profile.userId },
+          data: { walletAddress },
+        }).catch(() => {});
+      }
 
       // Audit log
       await prisma.auditLog.create({

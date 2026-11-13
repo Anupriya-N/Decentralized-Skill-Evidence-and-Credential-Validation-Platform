@@ -137,8 +137,9 @@ export class JobsService {
               reconciledCount++;
             } else if (blockchainService.isConfigured) {
               // Attempt bounded resubmission via relayer
-              const resubmit = await blockchainService.anchorCredential(cred.credentialHash, cred.issuerId);
-              if (resubmit.success) {
+              const resubmit = await blockchainService.anchorCredential(cred.credentialHash, expectedIssuer);
+              const isResubmitConfirmed = Boolean(resubmit.isConfirmed || resubmit.success);
+              if (isResubmitConfirmed) {
                 await prisma.blockchainAnchor.update({
                   where: { id: anchor.id },
                   data: {

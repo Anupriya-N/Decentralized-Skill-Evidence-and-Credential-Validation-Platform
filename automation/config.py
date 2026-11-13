@@ -16,10 +16,10 @@ class Config:
     BACKEND_URL = os.getenv("BACKEND_URL", f"http://localhost:{BACKEND_PORT}")
     API_BASE = f"{BACKEND_URL}/api/v1"
     
-    FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", 5173))
+    FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", 3000))
     FRONTEND_URL = os.getenv("FRONTEND_URL", f"http://localhost:{FRONTEND_PORT}")
     
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:root@localhost:5432/certitrust_db?schema=public")
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:root@127.0.0.1:5432/certitrust_db?schema=public")
     
     BLOCKCHAIN_RPC_URL = os.getenv("BLOCKCHAIN_RPC_URL", "http://localhost:8545")
     CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS", "0x742d35Cc6634C0532925a3b844Bc454e4438f44e")

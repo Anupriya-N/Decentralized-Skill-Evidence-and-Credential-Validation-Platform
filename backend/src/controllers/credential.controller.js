@@ -122,6 +122,22 @@ export class CredentialController {
         );
       }
 
+      if (!registeredIssuerAddress) {
+        await prisma.user.update({
+          where: { id: req.user.id },
+          data: {
+            walletAddress: signingWallet.address,
+            institutionProfile: {
+              update: {
+                signingPublicKey: signingWallet.address,
+              },
+            },
+          },
+        }).catch((err) => {
+          console.warn('Could not auto-update institution wallet address:', err.message);
+        });
+      }
+
       const certNumber = generateCertificateNumber('CRT', courseCode || 'SKILL');
       const issuedAtDate = new Date();
 

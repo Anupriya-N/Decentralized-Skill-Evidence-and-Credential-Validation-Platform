@@ -39,13 +39,19 @@ router.post('/register-proof', authenticate, authorize('INSTITUTION', 'ADMIN'), 
       throw new BadRequestError('credentialId and sha256Digest are required');
     }
 
+    const issuerAddress =
+      req.user.rawUser?.walletAddress ||
+      req.user.rawUser?.institutionProfile?.signingPublicKey ||
+      null;
+
     const anchorResult = await blockchainService.anchorCredential(
       sha256Digest,
-      req.user.institutionProfile?.id || req.user.id
+      issuerAddress
     );
 
-    res.status(anchorResult.success ? 201 : 503).json({
-      success: anchorResult.success,
+    const isOk = Boolean(anchorResult.success || anchorResult.isConfirmed);
+    res.status(isOk ? 201 : 503).json({
+      success: isOk,
       data: anchorResult,
     });
   } catch (error) {

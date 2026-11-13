@@ -63,7 +63,7 @@ export const AppProvider = ({ children }) => {
 
   const approveValidationRequestAction = async (requestId, actingUser = null) => {
     try {
-      const result = issuerService.approveValidationRequest(requestId, actingUser);
+      const result = await issuerService.approveValidationRequest(requestId, actingUser);
       refreshData();
       toast.success('Student claim verified and approved! Credential attested as trusted.');
       return result;
@@ -75,7 +75,7 @@ export const AppProvider = ({ children }) => {
 
   const rejectValidationRequestAction = async (requestId, reason, actingUser = null) => {
     try {
-      const result = issuerService.rejectValidationRequest(requestId, reason, actingUser);
+      const result = await issuerService.rejectValidationRequest(requestId, reason, actingUser);
       refreshData();
       toast.error(`Student claim rejected: "${reason}"`);
       return result;
@@ -85,9 +85,9 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const updateIssuerTrustStatus = (issuerId, newStatus, reason = '', actingUser = null) => {
+  const updateIssuerTrustStatus = async (issuerId, newStatus, reason = '', actingUser = null) => {
     try {
-      const updated = issuerService.updateTrustStatus(issuerId, newStatus, reason, actingUser);
+      const updated = await issuerService.updateTrustStatus(issuerId, newStatus, reason, actingUser);
       refreshData();
       toast.success(`Issuer accreditation updated to: ${newStatus.toUpperCase()}`);
       return updated;

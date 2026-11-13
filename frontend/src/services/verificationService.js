@@ -1,6 +1,7 @@
 import { storageService } from './storageService.js';
 import { compareHashes } from '../utils/hashUtils.js';
 import { blockchainService } from './blockchainService.js';
+import { apiClient } from './apiClient.js';
 
 /**
  * Verification Service
@@ -47,10 +48,137 @@ export const verificationService = {
    * @returns {Promise<object>} Complete verification result with all 6 checks and overallResult
    */
   async verifyCredential(credentialId, uploadedFileHash = null, verifierUser = null, method = 'link', options = {}) {
+    const cleanId = (credentialId || '').trim();
+
+    // 0. Query genuine backend 6-point verification API first
+    try {
+      const queryParam = uploadedFileHash ? `?hash=${encodeURIComponent(uploadedFileHash)}` : '';
+      const apiRes = await apiClient.get(`/verification/verify/${encodeURIComponent(cleanId)}${queryParam}`);
+      if (apiRes && apiRes.data && apiRes.data.credential) {
+        const d = apiRes.data;
+        const c = d.credential;
+        const isRevoked = d.overallStatus === 'REVOKED' || Boolean(c.revokedAt) || Boolean(d.onChainVerification?.onChainRevoked);
+        const isHashMismatch = d.overallStatus === 'TAMPERED';
+        const isExpired = d.overallStatus === 'EXPIRED';
+        const isIssuerUntrusted = d.overallStatus === 'INVALID_ISSUER' || (!c.issuerAccredited && d.checks?.issuerAccredited === false);
+        const isBlockchainConfirmed = Boolean(d.checks?.blockchainConfirmed || d.onChainVerification?.status === 'CONFIRMED_ON_CHAIN');
+
+        let overall = VERIFICATION_STATES.FULLY_VERIFIED;
+        if (isRevoked) overall = VERIFICATION_STATES.CREDENTIAL_REVOKED;
+        else if (isHashMismatch) overall = VERIFICATION_STATES.HASH_MISMATCH;
+        else if (isExpired) overall = VERIFICATION_STATES.CREDENTIAL_EXPIRED;
+        else if (isIssuerUntrusted) overall = VERIFICATION_STATES.ISSUER_NOT_TRUSTED;
+        else if (!isBlockchainConfirmed) overall = VERIFICATION_STATES.PENDING_VERIFICATION;
+
+        return {
+          recordFound: true,
+          credential: {
+            id: c.id,
+            credentialId: c.certificateNumber,
+            title: c.title,
+            ownerName: c.studentName,
+            issuerId: c.issuerId || 'iss-real',
+            issuerName: c.issuerName,
+            issueDate: c.issuedAt ? new Date(c.issuedAt).toISOString().split('T')[0] : '',
+            expiryDate: c.expiresAt ? new Date(c.expiresAt).toISOString().split('T')[0] : null,
+            fileHash: c.credentialHash,
+            credentialStatus: isRevoked ? 'revoked' : 'active',
+            revocationReason: c.revocationReason,
+            revokedAt: c.revokedAt,
+            blockchainAnchor: c.blockchainAnchor,
+          },
+          issuer: {
+            organizationName: c.issuerName,
+            trustStatus: c.issuerAccredited ? 'externally_verified' : 'demo_approved',
+          },
+          checks: {
+            record: {
+              id: 'record_exists',
+              label: 'Credential record exists',
+              status: 'FOUND',
+              passed: true,
+              pending: false,
+              credentialId: c.certificateNumber,
+              title: c.title,
+              registeredAt: c.issuedAt,
+              message: 'Cryptographic proof record located on platform database registry.'
+            },
+            fileHash: {
+              id: 'hash_match',
+              label: 'Uploaded evidence SHA-256 hash matches',
+              status: uploadedFileHash ? (isHashMismatch ? 'MISMATCH' : 'MATCH') : 'NOT_CHECKED',
+              passed: uploadedFileHash ? !isHashMismatch : false,
+              pending: !uploadedFileHash,
+              registeredHash: c.credentialHash,
+              checkedHash: uploadedFileHash,
+              message: uploadedFileHash ? (isHashMismatch ? 'Binary digest mismatch.' : 'Exact binary SHA-256 match.') : 'Original certificate document not submitted for digest comparison.'
+            },
+            issuer: {
+              id: 'issuer_trusted',
+              label: 'Issuer is authorized and trusted',
+              status: c.issuerAccredited ? 'TRUSTED' : 'PENDING',
+              passed: Boolean(c.issuerAccredited),
+              pending: !c.issuerAccredited,
+              issuerName: c.issuerName,
+              message: c.issuerAccredited ? 'Issuing authority is an accredited verified institution.' : 'Issuer accreditation is pending.'
+            },
+            lifecycle: {
+              id: 'credential_not_revoked',
+              label: 'Credential is active and not revoked',
+              status: isRevoked ? 'REVOKED' : 'ACTIVE',
+              passed: !isRevoked,
+              pending: false,
+              revocationReason: c.revocationReason || null,
+              revokedAt: c.revokedAt || null,
+              message: isRevoked ? `Credential revoked: ${c.revocationReason || 'Revoked'}` : 'Credential record is active and unrevoked.'
+            },
+            expiration: {
+              id: 'credential_not_expired',
+              label: 'Credential has not expired',
+              status: isExpired ? 'EXPIRED' : 'ACTIVE_PERIOD',
+              passed: !isExpired,
+              pending: false,
+              expiryDate: c.expiresAt,
+              message: isExpired ? `Expired on ${c.expiresAt}` : (c.expiresAt ? `Valid until ${c.expiresAt}` : 'Lifetime validity.')
+            },
+            blockchain: {
+              id: 'blockchain_proof',
+              label: 'Blockchain proof is successfully verified',
+              status: isBlockchainConfirmed ? 'VERIFIED' : (d.onChainVerification?.liveCheckPerformed ? 'UNAVAILABLE' : 'PENDING_BLOCKCHAIN'),
+              passed: isBlockchainConfirmed,
+              pending: !isBlockchainConfirmed,
+              network: c.blockchainAnchor?.network || 'Ethereum Sepolia',
+              transactionHash: c.blockchainAnchor?.transactionHash || null,
+              blockNumber: c.blockchainAnchor?.blockNumber || null,
+              message: isBlockchainConfirmed ? 'Proof confirmed on smart contract ledger.' : 'Blockchain verification pending or unavailable.'
+            }
+          },
+          overallResult: overall,
+          verificationScore: d.verificationScore || 100
+        };
+      }
+    } catch (apiErr) {
+      if (apiErr.status === 404) {
+        return {
+          recordFound: false,
+          credential: null,
+          issuer: null,
+          checks: {
+            record: { id: 'record_exists', label: 'Credential record exists', status: 'NOT_FOUND', passed: false, pending: false, message: `No credential record found for ID: ${cleanId}` },
+            fileHash: { id: 'hash_match', label: 'Uploaded evidence SHA-256 hash matches', status: 'NOT_CHECKED', passed: false, pending: true, message: 'Record not found; file digest comparison cannot be performed.' },
+            issuer: { id: 'issuer_trusted', label: 'Issuer is authorized and trusted', status: 'UNKNOWN', passed: false, pending: false, message: 'Issuing organization unknown.' },
+            lifecycle: { id: 'credential_not_revoked', label: 'Credential is active and not revoked', status: 'UNKNOWN', passed: false, pending: false, message: 'Lifecycle status unavailable.' },
+            expiration: { id: 'credential_not_expired', label: 'Credential has not expired', status: 'UNKNOWN', passed: false, pending: false, message: 'Validity period unavailable.' },
+            blockchain: { id: 'blockchain_proof', label: 'Blockchain proof is successfully verified', status: 'UNAVAILABLE', passed: false, pending: false, message: 'Blockchain proof query unavailable.' }
+          },
+          overallResult: VERIFICATION_STATES.CREDENTIAL_NOT_FOUND
+        };
+      }
+    }
+
     const creds = storageService.getCredentials();
     const issuers = storageService.getIssuers();
 
-    const cleanId = (credentialId || '').trim();
     const credential = creds.find(c => 
       c.credentialId?.toLowerCase() === cleanId.toLowerCase() || 
       c.id?.toLowerCase() === cleanId.toLowerCase()

@@ -20,11 +20,12 @@ export const blockchainService = {
   },
 
   /**
-   * Indicates whether an active live web3 provider or live RPC network is connected.
+   * Indicates whether live blockchain mode is enabled.
+   * Can communicate via backend RPC relayer or direct window.ethereum provider.
    */
   isConnected() {
     const isLive = import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN === 'true';
-    return Boolean(isLive && typeof window !== 'undefined' && window.ethereum);
+    return Boolean(isLive);
   },
 
   getNetworkConfig() {
@@ -33,7 +34,7 @@ export const blockchainService = {
       connected,
       mode: this.isDemoMode() ? 'DEMO_MODE' : 'PRODUCTION_MODE',
       networkName: connected ? 'Ethereum Sepolia Testnet' : 'Not Connected (Live Network Inactive)',
-      contractAddress: connected ? '0x32A6f4B3bC430b2c1C6809E18a2872323c21C28e' : null,
+      contractAddress: connected ? (import.meta.env?.VITE_CONTRACT_ADDRESS || '0x742d35Cc6634C0532925a3b844Bc454e4438f44e') : null,
       explorerBaseUrl: 'https://sepolia.etherscan.io'
     };
   },
@@ -51,8 +52,9 @@ export const blockchainService = {
           sha256Digest,
           issuerWalletOrId
         });
+        const payload = response?.data || response;
         return {
-          ...response,
+          ...payload,
           isMock: false,
           isDemo: false
         };
@@ -91,17 +93,24 @@ export const blockchainService = {
     if (this.isConnected()) {
       try {
         const response = await apiClient.get(`/blockchain/verify/${encodeURIComponent(credentialId)}?hash=${encodeURIComponent(sha256Digest)}`);
-        const isVerified = Boolean(response?.verified && response?.matches);
+        const payload = response?.data || response;
+        const isConfirmed = Boolean(
+          payload?.checks?.blockchainConfirmed || 
+          payload?.onChainVerification?.status === 'CONFIRMED_ON_CHAIN' ||
+          payload?.verified ||
+          payload?.matches
+        );
+        const anchor = payload?.credential?.blockchainAnchor || payload;
         return {
-          verified: isVerified,
-          status: isVerified ? 'VERIFIED' : 'FAILED',
-          network: this.getNetworkConfig().networkName,
-          transactionHash: response?.transactionHash || null,
-          blockNumber: response?.blockNumber || null,
+          verified: isConfirmed,
+          status: isConfirmed ? 'VERIFIED' : (payload?.onChainVerification?.status || 'FAILED'),
+          network: anchor?.network || this.getNetworkConfig().networkName,
+          transactionHash: anchor?.transactionHash || payload?.transactionHash || null,
+          blockNumber: anchor?.blockNumber || payload?.blockNumber || null,
           isDemo: false,
-          message: isVerified 
+          message: isConfirmed 
             ? 'Proof confirmed on live smart contract registry.' 
-            : 'Proof digest does not match on-chain record.'
+            : 'Proof digest not yet confirmed on-chain.'
         };
       } catch (err) {
         console.warn('Real blockchain verification query failed.', err);

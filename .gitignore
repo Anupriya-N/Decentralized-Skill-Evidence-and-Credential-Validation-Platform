@@ -41,7 +41,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
-backend/uploads/temp/
+uploads/
+backend/uploads/
 
 # Editor & System Files
 .vscode/

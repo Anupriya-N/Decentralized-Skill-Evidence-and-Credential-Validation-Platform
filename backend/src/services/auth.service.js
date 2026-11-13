@@ -10,7 +10,7 @@ export class AuthService {
   /**
    * Register a new user with secure role provisioning
    */
-  async register({ email, password, name, role = 'STUDENT', institutionName, companyName }) {
+  async register({ email, password, name, role = 'STUDENT', institutionName, companyName, walletAddress, signingPublicKey }) {
     const rawRole = String(role || 'STUDENT').toUpperCase();
 
     // STRICT SECURITY: Public registration must never allow ADMIN
@@ -36,6 +36,7 @@ export class AuthService {
           passwordHash,
           name,
           role: normalizedRole,
+          walletAddress: walletAddress || null,
           isVerified: false, // Must be verified
           profile: {
             create: {
@@ -60,6 +61,7 @@ export class AuthService {
           data: {
             userId: newUser.id,
             institutionName: institutionName || `${name}'s Academic Institution`,
+            signingPublicKey: signingPublicKey || walletAddress || null,
             isAccredited: false, // Strict: Pending Admin Review
           },
         });

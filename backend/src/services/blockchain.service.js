@@ -143,6 +143,7 @@ export class BlockchainService {
 
     if (!validateBytes32Hash(credentialHash)) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'INVALID_HASH_FORMAT',
         reason: 'Credential hash must be a valid 32-byte hexadecimal string',
@@ -154,6 +155,7 @@ export class BlockchainService {
 
     if (!this.isConfigured || !this.contract) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'PENDING_BLOCKCHAIN',
         reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
@@ -167,6 +169,7 @@ export class BlockchainService {
       const network = await this.provider.getNetwork();
       if (Number(network.chainId) !== env.CHAIN_ID) {
         return {
+          success: false,
           isConfirmed: false,
           status: 'CHAIN_MISMATCH',
           reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
@@ -189,6 +192,7 @@ export class BlockchainService {
 
       if (!receipt || receipt.status !== 1) {
         return {
+          success: false,
           isConfirmed: false,
           status: 'FAILED',
           reason: 'Blockchain transaction reverted or receipt status failed',
@@ -203,6 +207,7 @@ export class BlockchainService {
       const isConfirmed = exists && !revoked && isIssuerMatch;
 
       return {
+        success: isConfirmed,
         isConfirmed,
         status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
         transactionHash: receipt.hash,
@@ -214,6 +219,7 @@ export class BlockchainService {
       };
     } catch (error) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'FAILED',
         reason: error.message,
@@ -235,6 +241,7 @@ export class BlockchainService {
     // Priority 4.3: Reject malformed hashes instead of silent padding
     if (!validateBytes32Hash(credentialHash)) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'INVALID_HASH_FORMAT',
         reason: 'Credential hash must be a valid 32-byte hexadecimal string',
@@ -246,6 +253,7 @@ export class BlockchainService {
 
     if (!this.isConfigured || !this.contract) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'PENDING_BLOCKCHAIN',
         reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
@@ -260,6 +268,7 @@ export class BlockchainService {
       const network = await this.provider.getNetwork();
       if (Number(network.chainId) !== env.CHAIN_ID) {
         return {
+          success: false,
           isConfirmed: false,
           status: 'CHAIN_MISMATCH',
           reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
@@ -276,6 +285,7 @@ export class BlockchainService {
 
       if (!receipt || receipt.status !== 1) {
         return {
+          success: false,
           isConfirmed: false,
           status: 'FAILED',
           reason: 'Blockchain transaction reverted or receipt status failed',
@@ -294,6 +304,7 @@ export class BlockchainService {
       const isConfirmed = exists && !revoked && isIssuerMatch;
 
       return {
+        success: isConfirmed,
         isConfirmed,
         status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
         transactionHash: receipt.hash,
@@ -304,6 +315,7 @@ export class BlockchainService {
       };
     } catch (error) {
       return {
+        success: false,
         isConfirmed: false,
         status: 'FAILED',
         reason: error.message,
@@ -387,11 +399,11 @@ export class BlockchainService {
     await this.ensureInitialized();
 
     if (!validateBytes32Hash(credentialHash)) {
-      return { success: false, reason: 'Invalid credential hash format' };
+      return { success: false, isConfirmed: false, reason: 'Invalid credential hash format' };
     }
 
     if (!this.isConfigured || !this.contract) {
-      return { success: false, reason: 'Blockchain relayer wallet or contract not configured' };
+      return { success: false, isConfirmed: false, reason: 'Blockchain relayer wallet or contract not configured' };
     }
 
     try {
@@ -407,19 +419,21 @@ export class BlockchainService {
       const receipt = await tx.wait(1);
 
       if (!receipt || receipt.status !== 1) {
-        return { success: false, reason: 'Transaction reverted or receipt status failed' };
+        return { success: false, isConfirmed: false, reason: 'Transaction reverted or receipt status failed' };
       }
 
       // Read back to confirm state
       const [, , , revoked] = await this.contract.verifyCredential(formattedHash);
 
+      const isRevokedConfirmed = Boolean(revoked);
       return {
-        success: Boolean(revoked),
+        success: isRevokedConfirmed,
+        isConfirmed: isRevokedConfirmed,
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
       };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, isConfirmed: false, error: error.message };
     }
   }
 
@@ -430,11 +444,11 @@ export class BlockchainService {
     await this.ensureInitialized();
 
     if (!validateBytes32Hash(credentialHash)) {
-      return { success: false, reason: 'Invalid credential hash format' };
+      return { success: false, isConfirmed: false, reason: 'Invalid credential hash format' };
     }
 
     if (!this.isConfigured || !this.contract) {
-      return { success: false, reason: 'Blockchain relayer wallet or contract not configured' };
+      return { success: false, isConfirmed: false, reason: 'Blockchain relayer wallet or contract not configured' };
     }
 
     try {
@@ -444,6 +458,7 @@ export class BlockchainService {
       if (ownerAddress.toLowerCase() !== relayerAddress.toLowerCase()) {
         return {
           success: false,
+          isConfirmed: false,
           reason: `Relayer wallet (${relayerAddress}) is not the contract owner (${ownerAddress}). Direct revocation requires contract owner permissions.`,
         };
       }
@@ -454,19 +469,21 @@ export class BlockchainService {
       const receipt = await tx.wait(1);
 
       if (!receipt || receipt.status !== 1) {
-        return { success: false, reason: 'Transaction reverted or receipt status failed' };
+        return { success: false, isConfirmed: false, reason: 'Transaction reverted or receipt status failed' };
       }
 
       // Read back to confirm state
       const [, , , revoked] = await this.contract.verifyCredential(formattedHash);
 
+      const isRevokedConfirmed = Boolean(revoked);
       return {
-        success: Boolean(revoked),
+        success: isRevokedConfirmed,
+        isConfirmed: isRevokedConfirmed,
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
       };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, isConfirmed: false, error: error.message };
     }
   }
 }

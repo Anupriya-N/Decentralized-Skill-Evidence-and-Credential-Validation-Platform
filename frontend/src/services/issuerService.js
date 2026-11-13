@@ -1,4 +1,5 @@
 import { storageService } from './storageService.js';
+import { apiClient } from './apiClient.js';
 
 /**
  * Institutional Accreditation Status Constants
@@ -105,6 +106,17 @@ export const issuerService = {
       normalizedStatus = ISSUER_ACCREDITATION_STATUS.DEMO_APPROVED;
     }
 
+    const isAccredited = normalizedStatus === ISSUER_ACCREDITATION_STATUS.DEMO_APPROVED ||
+      normalizedStatus === ISSUER_ACCREDITATION_STATUS.EXTERNALLY_VERIFIED;
+
+    // Call real backend administrator accreditation API asynchronously
+    apiClient.patch(`/admin/institutions/${encodeURIComponent(issuerId)}/accreditation`, {
+      isAccredited,
+      accreditationBody: reviewReason || 'Institutional accreditation verified'
+    }).catch((apiErr) => {
+      console.warn('Backend accreditation API notice:', apiErr.message);
+    });
+
     const newHistoryEntry = {
       action: `STATUS_CHANGE_TO_${normalizedStatus.toUpperCase()}`,
       actor: actingUser?.fullName || 'Platform Administrator',
@@ -174,6 +186,14 @@ export const issuerService = {
     const timestamp = new Date().toISOString();
     const reviewerUserId = actingUser?.id || 'user-issuer-01';
     const reviewerName = actingUser?.fullName || targetReq.issuerName || 'Issuing Authority';
+
+    // Call real backend evidence review API asynchronously
+    apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
+      status: 'APPROVED',
+      comments: 'Certificate evidence verified against registrar and approved.'
+    }).catch((apiErr) => {
+      console.warn('Backend evidence review API notice:', apiErr.message);
+    });
 
     const historyEntry = {
       action: 'CLAIM_APPROVED',
@@ -258,6 +278,14 @@ export const issuerService = {
     if (!reason || !reason.trim()) {
       throw new Error('A rejection reason must be provided.');
     }
+
+    // Call real backend evidence review API asynchronously
+    apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
+      status: 'REJECTED',
+      comments: reason.trim()
+    }).catch((apiErr) => {
+      console.warn('Backend evidence review API notice:', apiErr.message);
+    });
 
     const requests = storageService.getValidationRequests();
     const reqIndex = requests.findIndex(r => r.id === requestId);

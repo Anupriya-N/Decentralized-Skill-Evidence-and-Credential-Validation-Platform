@@ -149,6 +149,22 @@ export class InstitutionController {
         );
       }
 
+      if (!registeredIssuerAddress) {
+        await prisma.user.update({
+          where: { id: issuerId },
+          data: {
+            walletAddress: signingWallet.address,
+            institutionProfile: {
+              update: {
+                signingPublicKey: signingWallet.address,
+              },
+            },
+          },
+        }).catch((err) => {
+          console.warn('Could not auto-update institution wallet address in batch:', err.message);
+        });
+      }
+
       // Phase 1: Prepare normalized payloads and hashes with strict validation (No fake placeholder accounts)
       const preparedItems = [];
       const failures = [];
