@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
@@ -7,7 +7,8 @@ import { Button } from '../../components/common/Button';
 import { calculateSHA256 } from '../../utils/hashUtils';
 import { validateEvidenceFile } from '../../utils/validationUtils';
 import { CATEGORIES } from '../../utils/formatUtils';
-import { UploadCloud, FileCheck, Hash, Boxes } from 'lucide-react';
+import { UploadCloud, FileCheck, Hash, Boxes, Wallet, CheckCircle2 } from 'lucide-react';
+import { walletService } from '../../services/walletService';
 import toast from 'react-hot-toast';
 
 export const IssueCredentialPage = () => {
@@ -26,6 +27,16 @@ export const IssueCredentialPage = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [computedHash, setComputedHash] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [walletAccount, setWalletAccount] = useState(walletService.getConnectedAccount());
+  const [signWithMetaMask, setSignWithMetaMask] = useState(Boolean(walletService.getConnectedAccount()));
+
+  useEffect(() => {
+    const unsub = walletService.subscribe(st => {
+      setWalletAccount(st.account);
+      if (st.account) setSignWithMetaMask(true);
+    });
+    return () => unsub();
+  }, []);
 
   const handleFileChange = async (file) => {
     if (!file) return;
@@ -52,15 +63,33 @@ export const IssueCredentialPage = () => {
     }
     setSubmitting(true);
     try {
+      let metaMaskSignature = null;
+      if (signWithMetaMask && walletAccount) {
+        toast.loading('Please sign EIP-712 IssueAuthorization in MetaMask...', { id: 'mm-sign' });
+        try {
+          const signed = await walletService.signIssueAuthorization(computedHash);
+          metaMaskSignature = signed.signature;
+          toast.success('MetaMask EIP-712 signature approved!', { id: 'mm-sign' });
+        } catch (signErr) {
+          toast.dismiss('mm-sign');
+          toast.error(signErr.message || 'Signature rejected in MetaMask');
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const newCred = await addCredential({
         ownerUserId: recipientStudentId,
+        studentId: recipientStudentId,
         title,
         skillName,
         category,
         issuerId: myIssuer.id,
         issuer: myIssuer.organizationName,
         issueDate,
-        visibility: 'public'
+        visibility: 'public',
+        eip712Signature: metaMaskSignature,
+        metaMaskSignature
       }, selectedFile, computedHash);
 
       toast.success(`Successfully issued "${newCred.title}"!`);
@@ -161,6 +190,39 @@ export const IssueCredentialPage = () => {
               {computedHash}
             </div>
           )}
+
+          {/* MetaMask EIP-712 Signing Option */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-amber-100 text-amber-700 rounded-lg">
+                <Wallet className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-800">
+                  Institutional Blockchain Authorization
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {walletAccount ? (
+                    <span className="text-emerald-700 font-medium">MetaMask Connected: {walletAccount.slice(0, 6)}...{walletAccount.slice(-4)}</span>
+                  ) : (
+                    'MetaMask not connected. Will use server-side authorized institutional key.'
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {walletAccount && (
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={signWithMetaMask}
+                  onChange={(e) => setSignWithMetaMask(e.target.checked)}
+                  className="rounded text-brand-600 focus:ring-brand-500"
+                />
+                Sign with MetaMask (EIP-712)
+              </label>
+            )}
+          </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <Button type="button" variant="secondary" onClick={() => navigate('/issuer/credentials')}>

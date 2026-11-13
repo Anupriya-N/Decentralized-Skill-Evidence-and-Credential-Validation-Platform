@@ -621,6 +621,149 @@ export class BlockchainService {
       };
     }
   }
+  /**
+   * Check if an issuer address is authorized on the smart contract
+   */
+  async isIssuerAuthorized(issuerAddress) {
+    await this.ensureInitialized();
+    if (!this.contract || !issuerAddress || !ethers.isAddress(issuerAddress)) {
+      return false;
+    }
+    try {
+      return Boolean(await this.contract.authorizedIssuers(issuerAddress));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Authorize an institution issuer on-chain (Owner relayer action)
+   */
+  async authorizeIssuer(issuerAddress) {
+    await this.ensureInitialized();
+    if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+      return {
+        success: false,
+        isConfirmed: false,
+        status: 'INVALID_ADDRESS',
+        error: 'Invalid issuer address provided',
+        issuerAddress,
+      };
+    }
+
+    if (!this.isConfigured || !this.contract) {
+      return {
+        success: false,
+        isConfirmed: false,
+        status: 'PENDING_CONFIG',
+        error: 'Blockchain relayer wallet or contract not configured',
+        issuerAddress,
+      };
+    }
+
+    try {
+      const cleanAddress = ethers.getAddress(issuerAddress);
+      const isAlready = await this.contract.authorizedIssuers(cleanAddress);
+      if (isAlready) {
+        return {
+          success: true,
+          isConfirmed: true,
+          status: 'ALREADY_AUTHORIZED',
+          issuerAddress: cleanAddress,
+          error: null,
+        };
+      }
+
+      const tx = await this.contract.authorizeIssuer(cleanAddress);
+      const receipt = await tx.wait(1);
+
+      const confirmed = Boolean(await this.contract.authorizedIssuers(cleanAddress));
+      return {
+        success: confirmed,
+        isConfirmed: confirmed,
+        transactionHash: receipt?.hash || null,
+        blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+        issuerAddress: cleanAddress,
+        status: confirmed ? 'AUTHORIZED' : 'FAILED_CONFIRMATION',
+        error: confirmed ? null : 'On-chain authorizedIssuers check returned false after transaction',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        issuerAddress,
+        status: 'FAILED',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Deauthorize an institution issuer on-chain (Owner relayer action)
+   */
+  async deauthorizeIssuer(issuerAddress) {
+    await this.ensureInitialized();
+    if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+      return {
+        success: false,
+        isConfirmed: false,
+        status: 'INVALID_ADDRESS',
+        error: 'Invalid issuer address provided',
+        issuerAddress,
+      };
+    }
+
+    if (!this.isConfigured || !this.contract) {
+      return {
+        success: false,
+        isConfirmed: false,
+        status: 'PENDING_CONFIG',
+        error: 'Blockchain relayer wallet or contract not configured',
+        issuerAddress,
+      };
+    }
+
+    try {
+      const cleanAddress = ethers.getAddress(issuerAddress);
+      const tx = await this.contract.deauthorizeIssuer(cleanAddress);
+      const receipt = await tx.wait(1);
+
+      const isStillAuth = Boolean(await this.contract.authorizedIssuers(cleanAddress));
+      return {
+        success: !isStillAuth,
+        isConfirmed: !isStillAuth,
+        transactionHash: receipt?.hash || null,
+        blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+        issuerAddress: cleanAddress,
+        status: !isStillAuth ? 'DEAUTHORIZED' : 'FAILED_CONFIRMATION',
+        error: !isStillAuth ? null : 'On-chain authorizedIssuers check returned true after deauthorization',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        issuerAddress,
+        status: 'FAILED',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Returns EIP-712 Domain configuration for frontend typed-data signatures
+   */
+  getEip712Domain() {
+    return {
+      name: 'CertiTrustAnchor',
+      version: '1',
+      chainId: env.CHAIN_ID,
+      verifyingContract: env.CONTRACT_ADDRESS || ethers.ZeroAddress,
+    };
+  }
 }
 
 export const blockchainService = new BlockchainService();

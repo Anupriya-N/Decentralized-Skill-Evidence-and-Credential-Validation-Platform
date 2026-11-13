@@ -1,6 +1,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { ethers } from 'ethers';
 import { app } from './app.js';
 import { connectDatabase, prisma } from './config/database.js';
 import {
@@ -573,6 +574,72 @@ async function runTests() {
       assert(err.message.includes('Invalid issuer address'), `getNonce with invalid address throws expected validation error: ${err.message}`);
     }
     assert(nonceErrorCaught === true, 'getNonce strictly rejects invalid address strings without silent fallback to 0');
+
+    // 24. Institutional MetaMask Wallet Challenge & Verification
+    console.log('\n--- 24. Institutional MetaMask Wallet Verification & Linking ---');
+    const challengeRes = await request('/api/v1/institutions/wallet/challenge', {
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+    });
+    assert(challengeRes.status === 200, 'GET /institutions/wallet/challenge returns 200');
+    assert(typeof challengeRes.data.data?.challenge === 'string', 'Challenge message contains cryptographic payload');
+    assert(typeof challengeRes.data.data?.nonce === 'string', 'Challenge response includes unique nonce');
+
+    // Sign the challenge with an authorized institutional wallet
+    const testWallet = ethers.Wallet.createRandom();
+    const challengeSig = await testWallet.signMessage(challengeRes.data.data.challenge);
+
+    // Link wallet with verified signature
+    const linkRes = await request('/api/v1/institutions/wallet/link', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        address: testWallet.address,
+        signature: challengeSig,
+        nonce: challengeRes.data.data.nonce,
+      },
+    });
+    assert(linkRes.status === 200, 'POST /institutions/wallet/link succeeds with valid MetaMask signature');
+    assert(linkRes.data.data.walletAddress === testWallet.address, 'Verified wallet address is persisted');
+
+    // Attempt link with tampered address/signature
+    const forgedLinkRes = await request('/api/v1/institutions/wallet/link', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+      body: {
+        address: '0x1111111111111111111111111111111111111111',
+        signature: challengeSig,
+      },
+    });
+    assert(forgedLinkRes.status === 400 || forgedLinkRes.status === 403, 'Forged wallet linking signature is strictly rejected (400/403)');
+
+    // Restore Oxford's original authorized signing wallet address
+    const originalOxfordAddress = '0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1';
+    await prisma.user.update({
+      where: { id: oxfordUserId },
+      data: { walletAddress: originalOxfordAddress },
+    });
+    await prisma.institutionProfile.update({
+      where: { userId: oxfordUserId },
+      data: { signingPublicKey: originalOxfordAddress },
+    });
+
+    // 25. EIP-712 Domain and Types Configuration
+    console.log('\n--- 25. EIP-712 Domain & Types Discovery ---');
+    const eip712Res = await request('/api/v1/institutions/eip712-params', {
+      headers: { Authorization: `Bearer ${oxfordToken}` },
+    });
+    assert(eip712Res.status === 200, 'GET /institutions/eip712-params returns 200');
+    assert(eip712Res.data.data.domain.name === 'CertiTrustAnchor', 'EIP-712 domain name matches smart contract (CertiTrustAnchor)');
+    assert(eip712Res.data.data.domain.version === '1', 'EIP-712 domain version matches smart contract (1)');
+    assert(Array.isArray(eip712Res.data.data.types.IssueAuthorization), 'IssueAuthorization typed data structure defined');
+    assert(Array.isArray(eip712Res.data.data.types.RevokeAuthorization), 'RevokeAuthorization typed data structure defined');
+
+    // 26. On-Chain Issuer Authorization Service Interface
+    console.log('\n--- 26. On-Chain Issuer Authorization Service Interface ---');
+    const isAuth = await blockchainService.isIssuerAuthorized(testWallet.address);
+    assert(typeof isAuth === 'boolean', 'blockchainService.isIssuerAuthorized returns boolean status without throw');
+    const domainObj = blockchainService.getEip712Domain();
+    assert(domainObj.name === 'CertiTrustAnchor', 'blockchainService.getEip712Domain returns correct contract domain');
 
     console.log('\n================================================================');
     console.log(`📊 Test Results: ${passed} passed, ${failed} failed`);

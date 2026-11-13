@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
@@ -12,12 +12,71 @@ import {
   ShieldCheck, 
   Clock, 
   UploadCloud, 
-  ExternalLink 
+  ExternalLink,
+  Wallet,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  LogOut
 } from 'lucide-react';
+import { walletService } from '../../services/walletService';
+import toast from 'react-hot-toast';
 
 export const IssuerDashboard = () => {
   const { user } = useAuth();
   const { issuers, credentials } = useApp();
+
+  const [walletState, setWalletState] = useState({
+    account: walletService.getConnectedAccount(),
+    chainId: walletService.getChainId(),
+    isSepolia: walletService.isSepoliaNetwork(),
+    isAvailable: walletService.isMetaMaskAvailable(),
+  });
+  const [connecting, setConnecting] = useState(false);
+  const [linking, setLinking] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = walletService.subscribe(setWalletState);
+    return () => unsubscribe();
+  }, []);
+
+  const handleConnectWallet = async () => {
+    setConnecting(true);
+    try {
+      const res = await walletService.connect();
+      toast.success(`Connected to MetaMask: ${res.address.slice(0, 6)}...${res.address.slice(-4)}`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to connect MetaMask');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleLinkWallet = async () => {
+    setLinking(true);
+    try {
+      const res = await walletService.linkInstitutionalWallet();
+      toast.success('MetaMask wallet verified and securely linked to institution account!');
+    } catch (err) {
+      toast.error(err.message || 'Wallet verification failed');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const handleSwitchNetwork = async () => {
+    try {
+      await walletService.switchToSepolia();
+      toast.success('Switched to Ethereum Sepolia network');
+    } catch (err) {
+      toast.error('Failed to switch network: ' + err.message);
+    }
+  };
+
+  const handleDisconnect = () => {
+    walletService.disconnect();
+    toast.success('MetaMask disconnected from session');
+  };
 
   const myIssuer = issuers.find(i => i.id === user?.issuerId || i.email === user?.email) || issuers[0];
   const issuedCreds = credentials.filter(c => c.issuerId === myIssuer?.id || c.issuerName === myIssuer?.organizationName);
@@ -51,6 +110,104 @@ export const IssuerDashboard = () => {
           </Link>
         </div>
       </div>
+
+      {/* Institutional MetaMask Blockchain Wallet Card */}
+      <Card className="p-5 border-l-4 border-l-amber-500 bg-gradient-to-r from-amber-50/50 via-white to-slate-50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl">
+              <Wallet className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">Institutional MetaMask Signing Wallet</h3>
+                {walletState.account ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                    <CheckCircle2 className="w-3 h-3" /> Connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600">
+                    Not Connected
+                  </span>
+                )}
+                {walletState.account && (
+                  walletState.isSepolia ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-100 text-blue-800">
+                      Ethereum Sepolia (11155111)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">
+                      <AlertTriangle className="w-3 h-3" /> Unsupported Network
+                    </span>
+                  )
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {walletState.account ? (
+                  <>
+                    Active Wallet: <span className="font-mono font-medium text-slate-800">{walletState.account}</span>
+                    <a
+                      href={`https://sepolia.etherscan.io/address/${walletState.account}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-2 inline-flex items-center text-brand-600 hover:underline text-[11px]"
+                    >
+                      Etherscan <ExternalLink className="w-3 h-3 ml-0.5" />
+                    </a>
+                  </>
+                ) : (
+                  'Connect institutional MetaMask wallet to authorize on-chain credential issuance with EIP-712 signatures.'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!walletState.account ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Wallet}
+                onClick={handleConnectWallet}
+                disabled={connecting}
+              >
+                {connecting ? 'Connecting...' : 'Connect MetaMask'}
+              </Button>
+            ) : (
+              <>
+                {!walletState.isSepolia && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={RefreshCw}
+                    onClick={handleSwitchNetwork}
+                  >
+                    Switch to Sepolia
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={ShieldCheck}
+                  onClick={handleLinkWallet}
+                  disabled={linking}
+                >
+                  {linking ? 'Verifying...' : 'Verify & Link Wallet'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={LogOut}
+                  onClick={handleDisconnect}
+                  title="Disconnect Wallet"
+                >
+                  Disconnect
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </Card>
 
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

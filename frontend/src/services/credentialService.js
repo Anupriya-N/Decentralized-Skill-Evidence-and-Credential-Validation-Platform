@@ -155,7 +155,9 @@ export const credentialService = {
           description: credentialData.description || '',
           type: credentialData.category || credentialData.type || 'CERTIFICATE',
           skills: credentialData.skillName ? [credentialData.skillName] : [],
-          expiresAt: credentialData.expiryDate || null
+          expiresAt: credentialData.expiryDate || null,
+          eip712Signature: credentialData.eip712Signature || credentialData.metaMaskSignature || null,
+          metaMaskSignature: credentialData.metaMaskSignature || credentialData.eip712Signature || null,
         };
 
         const res = await apiClient.post('/credentials', issuePayload);
@@ -294,7 +296,7 @@ export const credentialService = {
     return updated;
   },
 
-  async revokeCredential(id, reason, actorUserId = 'admin') {
+  async revokeCredential(id, reason, actorUserId = 'admin', metaMaskSignature = null) {
     const creds = storageService.getCredentials();
     const index = creds.findIndex(c => c.id === id || c.credentialId === id);
     const targetCred = index !== -1 ? creds[index] : null;
@@ -303,7 +305,9 @@ export const credentialService = {
     let backendResult = null;
     try {
       backendResult = await apiClient.post(`/credentials/${encodeURIComponent(lookupId)}/revoke`, {
-        reason: reason || 'Revoked by authorized institution'
+        reason: reason || 'Revoked by authorized institution',
+        eip712Signature: metaMaskSignature,
+        metaMaskSignature,
       });
     } catch (apiErr) {
       console.warn('Backend revocation API call notice:', apiErr.message);

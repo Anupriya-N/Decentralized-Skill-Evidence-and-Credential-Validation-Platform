@@ -41,3 +41,36 @@ class TestInstitutionWorkflow:
         })
         assert review_res.status_code == 200, f"Expected 200 for institutional review, got {review_res.status_code}"
         assert review_res.json()["data"]["status"] == "APPROVED"
+
+    def test_institution_wallet_challenge_endpoint(self, auth_institution):
+        inst_client = auth_institution["client"]
+        res = inst_client.get("/institutions/wallet/challenge")
+        assert res.status_code == 200, f"Expected 200 for wallet challenge, got {res.status_code}: {res.text}"
+        body = res.json()
+        assert body.get("success") is True
+        data = body.get("data", {})
+        assert "challenge" in data and "Nonce:" in data["challenge"]
+        assert "nonce" in data and len(data["nonce"]) == 64
+        assert "expiresAt" in data
+
+    def test_institution_wallet_link_rejection_on_invalid_sig(self, auth_institution):
+        inst_client = auth_institution["client"]
+        res = inst_client.post("/institutions/wallet/link", json={
+            "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            "signature": "0x" + "00" * 65,
+            "nonce": "invalidnonce"
+        })
+        assert res.status_code in (400, 403), f"Expected 400 or 403 for forged signature, got {res.status_code}"
+
+    def test_eip712_parameters_discovery(self, auth_institution):
+        inst_client = auth_institution["client"]
+        res = inst_client.get("/institutions/eip712-params")
+        assert res.status_code == 200, f"Expected 200 for EIP-712 params, got {res.status_code}: {res.text}"
+        body = res.json()
+        assert body.get("success") is True
+        data = body.get("data", {})
+        assert "domain" in data
+        assert data["domain"].get("name") == "CertiTrustAnchor"
+        assert "types" in data
+        assert "IssueAuthorization" in data["types"]
+        assert "RevokeAuthorization" in data["types"]

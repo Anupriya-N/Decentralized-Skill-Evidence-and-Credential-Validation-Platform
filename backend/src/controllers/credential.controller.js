@@ -199,7 +199,9 @@ export class CredentialController {
           deadline: deadline,
         };
 
-        const eip712Signature = await signingWallet.signTypedData(domain, types, value);
+        const eip712Signature = (req.body.eip712Signature || req.body.metaMaskSignature)
+          ? (req.body.eip712Signature || req.body.metaMaskSignature)
+          : await signingWallet.signTypedData(domain, types, value);
 
         anchorResult = await blockchainService.anchorCredentialWithSignature(
           formattedHash,
@@ -572,7 +574,9 @@ export class CredentialController {
             deadline: deadline,
           };
 
-          const signature = await signingWallet.signTypedData(domain, types, value);
+          const signature = (req.body.eip712Signature || req.body.metaMaskSignature)
+            ? (req.body.eip712Signature || req.body.metaMaskSignature)
+            : await signingWallet.signTypedData(domain, types, value);
 
           onChainResult = await blockchainService.revokeOnChainWithSignature(
             formattedHash,
