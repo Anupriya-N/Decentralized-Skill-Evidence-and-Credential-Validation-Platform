@@ -628,11 +628,14 @@ async function runTests() {
     const eip712Res = await request('/api/v1/institutions/eip712-params', {
       headers: { Authorization: `Bearer ${oxfordToken}` },
     });
-    assert(eip712Res.status === 200, 'GET /institutions/eip712-params returns 200');
-    assert(eip712Res.data.data.domain.name === 'CertiTrustAnchor', 'EIP-712 domain name matches smart contract (CertiTrustAnchor)');
-    assert(eip712Res.data.data.domain.version === '1', 'EIP-712 domain version matches smart contract (1)');
-    assert(Array.isArray(eip712Res.data.data.types.IssueAuthorization), 'IssueAuthorization typed data structure defined');
-    assert(Array.isArray(eip712Res.data.data.types.RevokeAuthorization), 'RevokeAuthorization typed data structure defined');
+    assert(
+      eip712Res.status === 200 || (eip712Res.status === 503 && eip712Res.data?.status === 'BLOCKCHAIN_UNAVAILABLE'),
+      'GET /institutions/eip712-params returns 200 or explicit 503 BLOCKCHAIN_UNAVAILABLE (Task 7)'
+    );
+    assert(eip712Res.data?.data?.domain?.name === 'CertiTrustAnchor', 'EIP-712 domain name matches smart contract (CertiTrustAnchor)');
+    assert(eip712Res.data?.data?.domain?.version === '1', 'EIP-712 domain version matches smart contract (1)');
+    assert(Array.isArray(eip712Res.data?.data?.types?.IssueAuthorization), 'IssueAuthorization typed data structure defined');
+    assert(Array.isArray(eip712Res.data?.data?.types?.RevokeAuthorization), 'RevokeAuthorization typed data structure defined');
 
     // 26. On-Chain Issuer Authorization Service Interface
     console.log('\n--- 26. On-Chain Issuer Authorization Service Interface ---');

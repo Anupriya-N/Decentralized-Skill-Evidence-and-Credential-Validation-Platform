@@ -97,12 +97,12 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const revokeCredentialAction = async (credId, reason, actingUser = null) => {
+  const revokeCredentialAction = async (credId, reason, actingUser = null, metaMaskSignature = null) => {
     try {
       const actorId = actingUser?.id || 'admin';
-      const revoked = await credentialService.revokeCredential(credId, reason, actorId);
+      const revoked = await credentialService.revokeCredential(credId, reason, actorId, metaMaskSignature);
       refreshData();
-      toast.error(`Credential ${revoked.credentialId} has been revoked.`);
+      toast.success(`Credential ${revoked.credentialId || credId} has been revoked.`);
       return revoked;
     } catch (err) {
       toast.error(err.message || 'Revocation failed.');

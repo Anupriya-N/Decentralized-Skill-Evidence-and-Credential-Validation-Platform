@@ -486,3 +486,20 @@ model Notification {
   @@index([userId])
   @@index([isRead])
 }
+
+// -------------------------------------------------------------
+// 7. INSTITUTIONAL WALLET LINKING CHALLENGES
+// -------------------------------------------------------------
+
+model WalletChallenge {
+  id          String   @id @default(uuid())
+  userId      String
+  nonce       String   @unique
+  message     String
+  expiresAt   DateTime
+  isConsumed  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([nonce])
+}

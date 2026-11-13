@@ -156,7 +156,8 @@ export class JobsService {
             );
 
             const onChain = await Promise.race([onChainPromise, timeoutPromise]);
-            if (onChain.checked && onChain.exists) {
+            // Task 5: Strictly verify existence, exact hash, expected issuer address, and not revoked
+            if (onChain.checked && onChain.exists && !onChain.revoked && (onChain.isIssuerMatch || !expectedIssuer)) {
               await prisma.blockchainAnchor.update({
                 where: { id: anchor.id },
                 data: {
@@ -231,7 +232,8 @@ export class JobsService {
 
           const status = await Promise.race([verifyPromise, timeoutPromise]);
 
-          if (status.checked && status.revoked) {
+          // Task 5: Check credential exists on-chain, original issuer matches, and revoked is true
+          if (status.checked && status.exists && status.revoked && (status.isIssuerMatch || !expectedIssuer)) {
             await prisma.credential.update({
               where: { id: cred.id },
               data: {

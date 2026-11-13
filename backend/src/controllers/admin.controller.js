@@ -1,5 +1,7 @@
 import { prisma } from '../config/database.js';
 import { NotFoundError } from '../utils/errors.js';
+import { blockchainService } from '../services/blockchain.service.js';
+import { ethers } from 'ethers';
 
 export class AdminController {
   /**
@@ -134,6 +136,23 @@ export class AdminController {
         }).catch(() => {});
       }
 
+      // Task 8: If suspension, deauthorize issuer on-chain; if accreditation approved and wallet provided, authorize on-chain
+      let onChainActionStatus = null;
+      const targetWallet = walletAddress || signingPublicKey || profile.signingPublicKey;
+      if (targetWallet && ethers.isAddress(targetWallet) && blockchainService.isConfigured && blockchainService.contract) {
+        try {
+          if (!isAccredited) {
+            const deauthRes = await blockchainService.deauthorizeIssuer(targetWallet);
+            onChainActionStatus = deauthRes.status;
+          } else {
+            const authRes = await blockchainService.authorizeIssuer(targetWallet);
+            onChainActionStatus = authRes.status;
+          }
+        } catch (bcErr) {
+          console.warn('Admin on-chain authorization sync notice:', bcErr.message);
+        }
+      }
+
       // Audit log
       await prisma.auditLog.create({
         data: {
@@ -141,7 +160,7 @@ export class AdminController {
           action: isAccredited ? 'INSTITUTION_ACCREDITED' : 'INSTITUTION_SUSPENDED',
           entity: 'INSTITUTION',
           entityId: profile.id,
-          details: { isAccredited },
+          details: { isAccredited, onChainActionStatus },
         },
       });
 

@@ -7,8 +7,9 @@ import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
 import { Modal } from '../../components/common/Modal';
 import { formatDate } from '../../utils/formatUtils';
-import { Award, AlertTriangle, ExternalLink, ShieldAlert } from 'lucide-react';
+import { Award, AlertTriangle, ExternalLink, ShieldAlert, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { walletService } from '../../services/walletService';
 
 export const IssuedCredentialsPage = () => {
   const { user } = useAuth();
@@ -27,7 +28,25 @@ export const IssuedCredentialsPage = () => {
 
     setRevokingLoading(true);
     try {
-      await revokeCredentialAction(revokingCred.id, revokeReason.trim());
+      let metaMaskSignature = null;
+      const account = walletService.getConnectedAccount();
+      const targetHash = revokingCred.fileHash || revokingCred.credentialHash || revokingCred.blockchainProof?.registeredDigest;
+
+      if (account && targetHash) {
+        toast.loading('Please sign EIP-712 RevokeAuthorization in MetaMask...', { id: 'mm-revoke' });
+        try {
+          const signed = await walletService.signRevokeAuthorization(targetHash);
+          metaMaskSignature = signed.signature;
+          toast.success('MetaMask EIP-712 revocation signed!', { id: 'mm-revoke' });
+        } catch (signErr) {
+          toast.dismiss('mm-revoke');
+          toast.error(signErr.message || 'Signature rejected in MetaMask');
+          setRevokingLoading(false);
+          return;
+        }
+      }
+
+      await revokeCredentialAction(revokingCred.id, revokeReason.trim(), user, metaMaskSignature);
       setRevokingCred(null);
       setRevokeReason('');
     } catch (err) {
@@ -105,7 +124,7 @@ export const IssuedCredentialsPage = () => {
               <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <span className="font-bold block">Permanent Auditable Action</span>
-                Revoking this credential records a simulated blockchain event and marks the verification result as revoked immediately.
+                Revoking this credential cryptographically submits an on-chain EIP-712 RevokeAuthorization transaction, permanently recording the revocation on Ethereum Sepolia.
               </div>
             </div>
 

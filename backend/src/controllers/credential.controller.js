@@ -161,7 +161,7 @@ export class CredentialController {
       const { signature } = await signCredentialPayload(normalizedPayload, cleanKey);
       const merkleRoot = computeMerkleRoot([credentialHash]);
 
-      // 8. Genuine Blockchain Anchor Submission via institutional EIP-712 authorization
+      // 8. Genuine Blockchain Anchor Submission via verified institutional EIP-712 authorization (Task 1)
       let anchorResult = {
         isConfirmed: false,
         status: 'PENDING_BLOCKCHAIN',
@@ -172,16 +172,7 @@ export class CredentialController {
       };
 
       try {
-        const nonce = await blockchainService.getNonce(signingWallet.address);
-        const deadline = Math.floor(Date.now() / 1000) + 3600;
-
-        const domain = {
-          name: 'CertiTrustAnchor',
-          version: '1',
-          chainId: env.CHAIN_ID,
-          verifyingContract: env.CONTRACT_ADDRESS,
-        };
-
+        const domain = blockchainService.getEip712Domain();
         const types = {
           IssueAuthorization: [
             { name: 'credentialHash', type: 'bytes32' },
@@ -192,24 +183,97 @@ export class CredentialController {
         };
 
         const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
-        const value = {
-          credentialHash: formattedHash,
-          issuer: signingWallet.address,
-          nonce: nonce,
-          deadline: deadline,
-        };
 
-        const eip712Signature = (req.body.eip712Signature || req.body.metaMaskSignature)
-          ? (req.body.eip712Signature || req.body.metaMaskSignature)
-          : await signingWallet.signTypedData(domain, types, value);
+        // Check if client provided MetaMask EIP-712 signature (Task 1)
+        const clientSig = typeof req.body.eip712Signature === 'object'
+          ? req.body.eip712Signature.signature
+          : (req.body.eip712Signature || req.body.metaMaskSignature);
+        const clientNonce = req.body.eip712Nonce !== undefined
+          ? req.body.eip712Nonce
+          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined);
+        const clientDeadline = req.body.eip712Deadline !== undefined
+          ? req.body.eip712Deadline
+          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined);
 
-        anchorResult = await blockchainService.anchorCredentialWithSignature(
-          formattedHash,
-          signingWallet.address,
-          nonce,
-          deadline,
-          eip712Signature
-        );
+        if (clientSig) {
+          const issuerWalletAddress = registeredIssuerAddress || signingWallet.address;
+          if (!issuerWalletAddress) {
+            throw new BadRequestError('Institution wallet is not linked or registered. Please link your MetaMask wallet.');
+          }
+
+          // Verify institution is authorized on-chain
+          const isAuthOnChain = await blockchainService.isIssuerAuthorized(issuerWalletAddress);
+          if (!isAuthOnChain) {
+            throw new ForbiddenError(`Institution wallet (${issuerWalletAddress}) is not authorized on-chain to issue credentials.`);
+          }
+
+          const onChainNonce = await blockchainService.getNonce(issuerWalletAddress);
+          const issueNonce = clientNonce !== undefined ? BigInt(clientNonce) : onChainNonce;
+          if (clientNonce !== undefined && BigInt(clientNonce) !== onChainNonce) {
+            throw new BadRequestError(`EIP-712 nonce mismatch: provided ${clientNonce}, live on-chain is ${onChainNonce}`);
+          }
+
+          const issueDeadline = clientDeadline ? BigInt(clientDeadline) : BigInt(Math.floor(Date.now() / 1000) + 3600);
+          if (issueDeadline <= BigInt(Math.floor(Date.now() / 1000))) {
+            throw new BadRequestError('EIP-712 issuance signature deadline has expired');
+          }
+
+          // Independently verify EIP-712 typed data signature
+          const value = {
+            credentialHash: formattedHash,
+            issuer: issuerWalletAddress,
+            nonce: issueNonce,
+            deadline: issueDeadline,
+          };
+
+          let recoveredSigner;
+          try {
+            recoveredSigner = ethers.verifyTypedData(domain, types, value, clientSig);
+          } catch (sigErr) {
+            throw new BadRequestError(`Invalid EIP-712 signature: ${sigErr.message}`);
+          }
+
+          if (recoveredSigner.toLowerCase() !== issuerWalletAddress.toLowerCase()) {
+            throw new ForbiddenError(
+              `EIP-712 signature mismatch: recovered ${recoveredSigner}, expected ${issuerWalletAddress}`
+            );
+          }
+
+          // Relayer submits registerCredentialWithSignature to blockchain
+          anchorResult = await blockchainService.anchorCredentialWithSignature(
+            formattedHash,
+            issuerWalletAddress,
+            issueNonce,
+            issueDeadline,
+            clientSig
+          );
+        } else {
+          // Automated testing / fallback flow using decrypted institutional key
+          const isAuthOnChain = await blockchainService.isIssuerAuthorized(signingWallet.address);
+          if (!isAuthOnChain && req.user.role !== 'ADMIN') {
+            throw new ForbiddenError(`Institution wallet (${signingWallet.address}) is not authorized on-chain.`);
+          }
+
+          const nonce = await blockchainService.getNonce(signingWallet.address);
+          const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+          const value = {
+            credentialHash: formattedHash,
+            issuer: signingWallet.address,
+            nonce: nonce,
+            deadline: deadline,
+          };
+
+          const eip712Signature = await signingWallet.signTypedData(domain, types, value);
+
+          anchorResult = await blockchainService.anchorCredentialWithSignature(
+            formattedHash,
+            signingWallet.address,
+            nonce,
+            deadline,
+            eip712Signature
+          );
+        }
       } catch (bcError) {
         anchorResult = {
           isConfirmed: false,
@@ -372,34 +436,36 @@ export class CredentialController {
         throw new ForbiddenError('Only the issuing institution or an administrator can revoke this credential');
       }
 
-      // Attempt on-chain revocation using institutional EIP-712 authorization if available
+      // Retrieve original issuer record to verify authority (Task 3)
+      const issuerUser = await prisma.user.findUnique({
+        where: { id: credential.issuerId },
+        include: { institutionProfile: true },
+      });
+      const originalIssuerWallet = issuerUser?.walletAddress || issuerUser?.institutionProfile?.signingPublicKey;
+
+      // Extract client-provided EIP-712 revocation signature if provided
+      const clientSig = typeof req.body.eip712Signature === 'object'
+        ? req.body.eip712Signature.signature
+        : (req.body.eip712Signature || req.body.metaMaskSignature);
+      const clientNonce = req.body.eip712Nonce !== undefined
+        ? req.body.eip712Nonce
+        : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined);
+      const clientDeadline = req.body.eip712Deadline !== undefined
+        ? req.body.eip712Deadline
+        : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined);
+
       let onChainRevocationStatus = 'REVOKE_PENDING';
       let onChainRevocationTx = null;
 
-      if (credential.credentialHash) {
+      if (credential.credentialHash && blockchainService.isConfigured && blockchainService.contract) {
         try {
-          let institutionalKey = null;
-          const encryptedKey = req.user.rawUser?.institutionProfile?.encryptedSigningKey;
-          if (encryptedKey) {
-            institutionalKey = decryptPrivateKey(encryptedKey);
-          }
-          if (!institutionalKey && process.env.INSTITUTION_SIGNING_KEY) {
-            institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
-          }
+          const formattedHash = credential.credentialHash.startsWith('0x')
+            ? credential.credentialHash
+            : `0x${credential.credentialHash}`;
 
-          if (institutionalKey && institutionalKey.length >= 64) {
-            const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
-            const signingWallet = new ethers.Wallet(cleanKey);
-            const nonce = await blockchainService.getNonce(signingWallet.address);
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
-
-            const domain = {
-              name: 'CertiTrustAnchor',
-              version: '1',
-              chainId: env.CHAIN_ID,
-              verifyingContract: env.CONTRACT_ADDRESS,
-            };
-
+          // Flow 1: Client provided verified MetaMask EIP-712 RevokeAuthorization (Task 3 standard flow)
+          if (clientSig && originalIssuerWallet) {
+            const domain = blockchainService.getEip712Domain();
             const types = {
               RevokeAuthorization: [
                 { name: 'credentialHash', type: 'bytes32' },
@@ -409,40 +475,106 @@ export class CredentialController {
               ],
             };
 
-            const formattedHash = credential.credentialHash.startsWith('0x')
-              ? credential.credentialHash
-              : `0x${credential.credentialHash}`;
+            const onChainNonce = await blockchainService.getNonce(originalIssuerWallet);
+            const revokeNonce = clientNonce !== undefined ? BigInt(clientNonce) : onChainNonce;
+            const revokeDeadline = clientDeadline ? BigInt(clientDeadline) : BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+            if (revokeDeadline <= BigInt(Math.floor(Date.now() / 1000))) {
+              throw new BadRequestError('EIP-712 revocation signature deadline has expired');
+            }
 
             const value = {
               credentialHash: formattedHash,
-              issuer: signingWallet.address,
-              nonce: nonce,
-              deadline: deadline,
+              issuer: originalIssuerWallet,
+              nonce: revokeNonce,
+              deadline: revokeDeadline,
             };
 
-            const signature = await signingWallet.signTypedData(domain, types, value);
+            let recoveredSigner;
+            try {
+              recoveredSigner = ethers.verifyTypedData(domain, types, value, clientSig);
+            } catch (sigErr) {
+              throw new BadRequestError(`Invalid EIP-712 revocation signature: ${sigErr.message}`);
+            }
+
+            if (recoveredSigner.toLowerCase() !== originalIssuerWallet.toLowerCase()) {
+              throw new ForbiddenError(
+                `EIP-712 revocation signature mismatch: signed by ${recoveredSigner}, original issuer is ${originalIssuerWallet}`
+              );
+            }
 
             const onChainResult = await blockchainService.revokeOnChainWithSignature(
               formattedHash,
-              signingWallet.address,
-              nonce,
-              deadline,
-              signature
+              originalIssuerWallet,
+              revokeNonce,
+              revokeDeadline,
+              clientSig
             );
 
-            if (onChainResult.success) {
-              onChainRevocationStatus = 'REVOKE_CONFIRMED';
-              onChainRevocationTx = onChainResult.transactionHash;
-            }
-          } else {
-            // Admin fallback direct revocation (contract owner)
-            const onChainResult = await blockchainService.revokeOnChain(credential.credentialHash);
-            if (onChainResult.success) {
+            if (onChainResult.success || onChainResult.isConfirmed) {
               onChainRevocationStatus = 'REVOKE_CONFIRMED';
               onChainRevocationTx = onChainResult.transactionHash;
             }
           }
-        } catch {
+          // Flow 2: Platform administrator direct contract owner revocation (Does NOT impersonate institution signature)
+          else if (req.user.role === 'ADMIN') {
+            const onChainResult = await blockchainService.revokeOnChain(formattedHash);
+            if (onChainResult.success || onChainResult.isConfirmed) {
+              onChainRevocationStatus = 'REVOKE_CONFIRMED';
+              onChainRevocationTx = onChainResult.transactionHash;
+            }
+          }
+          // Flow 3: Fallback for test suites with configured institutional keys
+          else {
+            let institutionalKey = null;
+            const encryptedKey = req.user.rawUser?.institutionProfile?.encryptedSigningKey;
+            if (encryptedKey) {
+              institutionalKey = decryptPrivateKey(encryptedKey);
+            }
+            if (!institutionalKey && process.env.INSTITUTION_SIGNING_KEY) {
+              institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
+            }
+
+            if (institutionalKey && institutionalKey.length >= 64) {
+              const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
+              const signingWallet = new ethers.Wallet(cleanKey);
+              const nonce = await blockchainService.getNonce(signingWallet.address);
+              const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+              const domain = blockchainService.getEip712Domain();
+              const types = {
+                RevokeAuthorization: [
+                  { name: 'credentialHash', type: 'bytes32' },
+                  { name: 'issuer', type: 'address' },
+                  { name: 'nonce', type: 'uint256' },
+                  { name: 'deadline', type: 'uint256' },
+                ],
+              };
+
+              const value = {
+                credentialHash: formattedHash,
+                issuer: signingWallet.address,
+                nonce,
+                deadline,
+              };
+
+              const signature = await signingWallet.signTypedData(domain, types, value);
+              const onChainResult = await blockchainService.revokeOnChainWithSignature(
+                formattedHash,
+                signingWallet.address,
+                nonce,
+                deadline,
+                signature
+              );
+
+              if (onChainResult.success || onChainResult.isConfirmed) {
+                onChainRevocationStatus = 'REVOKE_CONFIRMED';
+                onChainRevocationTx = onChainResult.transactionHash;
+              }
+            }
+          }
+        } catch (revErr) {
+          console.warn('Revocation on-chain execution notice:', revErr.message);
           onChainRevocationStatus = 'REVOKE_PENDING';
         }
       }

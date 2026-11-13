@@ -166,12 +166,12 @@ export const credentialService = {
           const updatedList = [mapped, ...creds.filter(c => c.id !== mapped.id)];
           storageService.setCredentials(updatedList);
           return mapped;
+        } else {
+          throw new Error(res?.message || 'Backend rejected credential issuance');
         }
       } catch (issueErr) {
-        console.warn('Real backend credential issuance notice:', issueErr.message);
-        if (apiClient.getToken()) {
-          throw new Error(issueErr.data?.message || issueErr.message || 'Failed to issue credential via backend API');
-        }
+        console.error('Backend credential issuance failed:', issueErr.message);
+        throw new Error(issueErr.data?.message || issueErr.message || 'Failed to issue credential via backend API');
       }
     }
 
@@ -302,26 +302,29 @@ export const credentialService = {
     const targetCred = index !== -1 ? creds[index] : null;
     const lookupId = targetCred ? targetCred.id : id;
 
-    let backendResult = null;
-    try {
-      backendResult = await apiClient.post(`/credentials/${encodeURIComponent(lookupId)}/revoke`, {
-        reason: reason || 'Revoked by authorized institution',
-        eip712Signature: metaMaskSignature,
-        metaMaskSignature,
-      });
-    } catch (apiErr) {
-      console.warn('Backend revocation API call notice:', apiErr.message);
+    // Backend is the source of truth - no fallback to REVOKE_CONFIRMED on failure (Task 4)
+    const backendResult = await apiClient.post(`/credentials/${encodeURIComponent(lookupId)}/revoke`, {
+      reason: reason || 'Revoked by authorized institution',
+      eip712Signature: metaMaskSignature,
+      metaMaskSignature,
+    });
+
+    if (!backendResult || !backendResult.success) {
+      throw new Error(backendResult?.message || 'Backend rejected credential revocation');
     }
+
+    const onChainStatus = backendResult.data?.onChainRevocationStatus || 'REVOKE_PENDING';
+    const onChainTx = backendResult.data?.onChainRevocationTx || null;
 
     const updated = {
       ...(targetCred || { id, credentialId: id }),
       credentialStatus: 'revoked',
       status: 'REVOKED',
       revocationReason: reason,
-      revokedAt: new Date().toISOString(),
+      revokedAt: backendResult.data?.revokedAt || new Date().toISOString(),
       revokedBy: actorUserId,
-      onChainRevocationStatus: backendResult?.data?.onChainRevocationStatus || 'REVOKE_CONFIRMED',
-      onChainRevocationTx: backendResult?.data?.onChainRevocationTx || null,
+      onChainRevocationStatus: onChainStatus,
+      onChainRevocationTx: onChainTx,
       updatedAt: new Date().toISOString()
     };
 

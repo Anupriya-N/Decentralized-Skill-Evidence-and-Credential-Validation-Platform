@@ -62,13 +62,49 @@ class TestInstitutionWorkflow:
         })
         assert res.status_code in (400, 403), f"Expected 400 or 403 for forged signature, got {res.status_code}"
 
+    def test_student_blocked_from_wallet_linking(self, auth_student):
+        student_client = auth_student["client"]
+        res = student_client.get("/institutions/wallet/challenge")
+        assert res.status_code == 403, f"Expected 403 for student accessing wallet challenge, got {res.status_code}"
+        link_res = student_client.post("/institutions/wallet/link", json={
+            "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            "signature": "0x" + "11" * 65
+        })
+        assert link_res.status_code == 403, f"Expected 403 for student linking wallet, got {link_res.status_code}"
+
+    def test_unrequested_or_consumed_challenge_rejected(self, auth_institution):
+        inst_client = auth_institution["client"]
+        res = inst_client.post("/institutions/wallet/link", json={
+            "address": "0x1111111111111111111111111111111111111111",
+            "signature": "0x" + "aa" * 65,
+            "nonce": "non_existent_or_consumed_nonce"
+        })
+        assert res.status_code in (400, 403), f"Expected 400/403 for unrequested challenge, got {res.status_code}"
+
+    def test_duplicate_wallet_assignment_rejected(self, auth_institution):
+        inst_client = auth_institution["client"]
+        # Student Alex Chen's wallet is in DB
+        c_res = inst_client.get("/institutions/wallet/challenge")
+        assert c_res.status_code == 200
+        dup_res = inst_client.post("/institutions/wallet/link", json={
+            "address": "0x71c836489370c92257982e259d74944bc41d40ae",
+            "signature": "0x" + "22" * 65,
+            "nonce": c_res.json()["data"]["nonce"]
+        })
+        assert dup_res.status_code == 400, f"Expected 400 for duplicate wallet assignment, got {dup_res.status_code}: {dup_res.text}"
+        assert "already linked" in dup_res.text.lower()
+
     def test_eip712_parameters_discovery(self, auth_institution):
         inst_client = auth_institution["client"]
         res = inst_client.get("/institutions/eip712-params")
-        assert res.status_code == 200, f"Expected 200 for EIP-712 params, got {res.status_code}: {res.text}"
+        assert res.status_code in (200, 503), f"Expected 200 or 503 for EIP-712 params, got {res.status_code}: {res.text}"
         body = res.json()
-        assert body.get("success") is True
-        data = body.get("data", {})
+        if res.status_code == 200:
+            assert body.get("success") is True
+            data = body.get("data", {})
+        else:
+            assert body.get("status") == "BLOCKCHAIN_UNAVAILABLE"
+            data = body.get("data", {})
         assert "domain" in data
         assert data["domain"].get("name") == "CertiTrustAnchor"
         assert "types" in data

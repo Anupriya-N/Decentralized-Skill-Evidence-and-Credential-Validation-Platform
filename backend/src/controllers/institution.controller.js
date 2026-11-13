@@ -13,8 +13,7 @@ import { env } from '../config/env.js';
 import { ethers } from 'ethers';
 import { blockchainService } from '../services/blockchain.service.js';
 
-// Single-use challenge nonces for institutional MetaMask wallet linking
-const walletChallengeStore = new Map();
+// Persistent database-backed single-use challenges are managed via prisma.walletChallenge
 
 export class InstitutionController {
   /**
@@ -415,21 +414,31 @@ export class InstitutionController {
   }
 
   /**
-   * Request a unique, single-use, expiring wallet linking challenge
+   * Request a unique, single-use, database-backed expiring wallet linking challenge
    */
   async getWalletChallenge(req, res, next) {
     try {
       const userId = req.user.id;
       const nonce = crypto.randomBytes(32).toString('hex');
-      const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
       const institutionName = req.user.rawUser?.institutionProfile?.institutionName || req.user.name || req.user.email;
 
-      const challengeMessage = `CertiTrust Institutional Wallet Linking\n\nInstitution: ${institutionName}\nAccount ID: ${userId}\nNonce: ${nonce}\nExpires: ${new Date(expiresAt).toISOString()}`;
+      const challengeMessage = `CertiTrust Institutional Wallet Linking\n\nInstitution: ${institutionName}\nAccount ID: ${userId}\nNonce: ${nonce}\nExpires: ${expiresAt.toISOString()}`;
 
-      walletChallengeStore.set(userId, {
-        nonce,
-        message: challengeMessage,
-        expiresAt,
+      // Invalidate any previously unconsumed challenges for this user
+      await prisma.walletChallenge.deleteMany({
+        where: { userId, isConsumed: false },
+      }).catch(() => {});
+
+      // Persist single-use challenge in PostgreSQL
+      await prisma.walletChallenge.create({
+        data: {
+          userId,
+          nonce,
+          message: challengeMessage,
+          expiresAt,
+          isConsumed: false,
+        },
       });
 
       res.status(200).json({
@@ -437,7 +446,7 @@ export class InstitutionController {
         data: {
           challenge: challengeMessage,
           nonce,
-          expiresAt,
+          expiresAt: expiresAt.toISOString(),
         },
       });
     } catch (error) {
@@ -451,7 +460,12 @@ export class InstitutionController {
   async linkWallet(req, res, next) {
     try {
       const userId = req.user.id;
+      const userRole = req.user.role;
       const { address, signature, nonce } = req.body;
+
+      if (userRole !== 'INSTITUTION' && userRole !== 'ADMIN') {
+        throw new ForbiddenError('Only institutional or administrative accounts can link institutional signing wallets');
+      }
 
       if (!address || !ethers.isAddress(address)) {
         throw new BadRequestError('A valid Ethereum wallet address is required');
@@ -461,21 +475,36 @@ export class InstitutionController {
         throw new BadRequestError('Cryptographic signature from MetaMask is required to link wallet');
       }
 
-      const storedChallenge = walletChallengeStore.get(userId);
+      const checksumAddress = ethers.getAddress(address);
+
+      // Prevent duplicate institutional wallet assignment to other platform accounts
+      const duplicateUser = await prisma.user.findFirst({
+        where: {
+          walletAddress: { equals: checksumAddress, mode: 'insensitive' },
+          id: { not: userId },
+        },
+      });
+
+      if (duplicateUser) {
+        throw new BadRequestError('Wallet address is already linked to another institutional or platform account');
+      }
+
+      // Query database for active, unconsumed challenge
+      const storedChallenge = await prisma.walletChallenge.findFirst({
+        where: {
+          userId,
+          isConsumed: false,
+          expiresAt: { gt: new Date() },
+          ...(nonce ? { nonce } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
       if (!storedChallenge) {
         throw new BadRequestError('Wallet linking challenge has expired or was not requested. Please request a new challenge.');
       }
 
-      if (Date.now() > storedChallenge.expiresAt) {
-        walletChallengeStore.delete(userId);
-        throw new BadRequestError('Wallet linking challenge has expired. Please request a new challenge.');
-      }
-
-      if (nonce && nonce !== storedChallenge.nonce) {
-        throw new BadRequestError('Invalid challenge nonce provided');
-      }
-
-      // Recover signer from the exact challenge message
+      // Recover signer from the exact challenge message using personal_sign recovery
       let recoveredAddress;
       try {
         recoveredAddress = ethers.verifyMessage(storedChallenge.message, signature);
@@ -483,33 +512,35 @@ export class InstitutionController {
         throw new BadRequestError(`Invalid signature: ${err.message}`);
       }
 
-      if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
+      if (recoveredAddress.toLowerCase() !== checksumAddress.toLowerCase()) {
         throw new ForbiddenError(
-          `Signature verification mismatch: signed by ${recoveredAddress}, claimed address ${address}`
+          `Signature verification mismatch: signed by ${recoveredAddress}, claimed address ${checksumAddress}`
         );
       }
 
-      // Clear used challenge
-      walletChallengeStore.delete(userId);
-
-      const checksumAddress = ethers.getAddress(address);
-
-      // Persist verified wallet address on User and InstitutionProfile
-      await prisma.user.update({
-        where: { id: userId },
-        data: { walletAddress: checksumAddress },
-      });
-
-      const profile = await prisma.institutionProfile.findUnique({
-        where: { userId },
-      });
-
-      if (profile) {
-        await prisma.institutionProfile.update({
-          where: { userId },
-          data: { signingPublicKey: checksumAddress },
+      // Atomically consume challenge and update user wallet & profile
+      await prisma.$transaction(async (tx) => {
+        await tx.walletChallenge.update({
+          where: { id: storedChallenge.id },
+          data: { isConsumed: true },
         });
-      }
+
+        await tx.user.update({
+          where: { id: userId },
+          data: { walletAddress: checksumAddress },
+        });
+
+        const profile = await tx.institutionProfile.findUnique({
+          where: { userId },
+        });
+
+        if (profile) {
+          await tx.institutionProfile.update({
+            where: { userId },
+            data: { signingPublicKey: checksumAddress },
+          });
+        }
+      });
 
       // Check on-chain authorization status
       const isAuthorizedOnChain = await blockchainService.isIssuerAuthorized(checksumAddress);
@@ -529,41 +560,68 @@ export class InstitutionController {
   }
 
   /**
-   * Get EIP-712 domain and type definitions for frontend signing
+   * Get EIP-712 domain and type definitions for frontend signing.
+   * Strictly avoids fallback to nonce 0 when blockchain is unavailable (Task 7).
    */
   async getEip712Params(req, res, next) {
     try {
-      const domain = blockchainService.getEip712Domain();
       const userWallet = req.user.rawUser?.walletAddress || req.user.rawUser?.institutionProfile?.signingPublicKey || null;
 
-      let nonce = 0;
-      if (userWallet && ethers.isAddress(userWallet)) {
-        try {
-          nonce = await blockchainService.getNonce(userWallet);
-        } catch {
-          nonce = 0;
-        }
+      if (!userWallet || !ethers.isAddress(userWallet)) {
+        throw new BadRequestError('Institution wallet is not linked. Please connect and link your MetaMask wallet first.');
+      }
+
+      const domain = blockchainService.getEip712Domain();
+      const types = {
+        IssueAuthorization: [
+          { name: 'credentialHash', type: 'bytes32' },
+          { name: 'issuer', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+        RevokeAuthorization: [
+          { name: 'credentialHash', type: 'bytes32' },
+          { name: 'issuer', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      };
+
+      if (!blockchainService.isConfigured || !blockchainService.contract) {
+        return res.status(503).json({
+          success: false,
+          status: 'BLOCKCHAIN_UNAVAILABLE',
+          error: 'Blockchain relayer or smart contract is currently unavailable',
+          data: {
+            domain,
+            types,
+            issuerAddress: userWallet,
+          },
+        });
+      }
+
+      let currentNonce;
+      try {
+        currentNonce = await blockchainService.getNonce(userWallet);
+      } catch (err) {
+        return res.status(503).json({
+          success: false,
+          status: 'BLOCKCHAIN_UNAVAILABLE',
+          error: `Failed to query live on-chain nonce: ${err.message}`,
+          data: {
+            domain,
+            types,
+            issuerAddress: userWallet,
+          },
+        });
       }
 
       res.status(200).json({
         success: true,
         data: {
           domain,
-          types: {
-            IssueAuthorization: [
-              { name: 'credentialHash', type: 'bytes32' },
-              { name: 'issuer', type: 'address' },
-              { name: 'nonce', type: 'uint256' },
-              { name: 'deadline', type: 'uint256' },
-            ],
-            RevokeAuthorization: [
-              { name: 'credentialHash', type: 'bytes32' },
-              { name: 'issuer', type: 'address' },
-              { name: 'nonce', type: 'uint256' },
-              { name: 'deadline', type: 'uint256' },
-            ],
-          },
-          currentNonce: Number(nonce),
+          types,
+          currentNonce: Number(currentNonce),
           issuerAddress: userWallet,
         },
       });
@@ -601,6 +659,64 @@ export class InstitutionController {
         success: true,
         message: 'Institution successfully authorized on-chain',
         data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Deauthorize institution issuer on-chain (Admin only)
+   */
+  async deauthorizeOnChain(req, res, next) {
+    try {
+      const { institutionId, walletAddress } = req.body;
+      let targetAddress = walletAddress;
+
+      if (!targetAddress && institutionId) {
+        const user = await prisma.user.findUnique({
+          where: { id: institutionId },
+          include: { institutionProfile: true },
+        });
+        targetAddress = user?.walletAddress || user?.institutionProfile?.signingPublicKey;
+      }
+
+      if (!targetAddress || !ethers.isAddress(targetAddress)) {
+        throw new BadRequestError('Valid target Ethereum wallet address is required for on-chain deauthorization');
+      }
+
+      const result = await blockchainService.deauthorizeIssuer(targetAddress);
+      if (!result.success) {
+        throw new BadRequestError(result.error || 'Failed to deauthorize issuer on-chain');
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Institution successfully deauthorized on-chain',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get pending evidence submissions for institutional review
+   */
+  async getPendingEvidence(req, res, next) {
+    try {
+      const evidence = await prisma.evidence.findMany({
+        where: { status: 'PENDING_REVIEW' },
+        include: {
+          student: { select: { id: true, name: true, email: true, walletAddress: true } },
+          skills: { include: { skill: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.status(200).json({
+        success: true,
+        data: evidence,
       });
     } catch (error) {
       next(error);

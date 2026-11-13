@@ -54,15 +54,17 @@ class TestEvidenceWorkflow:
         assert download_res.status_code == 200
 
         # Unrelated student attempts download -> 403
+        import uuid
         from utils.api_client import APIClient
         from config import Config
         other_client = APIClient(Config.API_BASE)
         other_reg = other_client.post("/auth/register", json={
-            "email": f"intruder.{int(pytest.importorskip('time').time()*1000)}@test.edu",
+            "email": f"intruder.{uuid.uuid4().hex[:8]}@test.edu",
             "password": "Password123!",
             "name": "Intruder User",
             "role": "STUDENT"
         })
+        assert other_reg.status_code == 201, f"Expected 201 for intruder register, got {other_reg.status_code}: {other_reg.text}"
         other_token = other_reg.json()["data"]["accessToken"]
         other_client.set_token(other_token)
 

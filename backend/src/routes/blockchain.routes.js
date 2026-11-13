@@ -30,9 +30,12 @@ router.get('/verify/:credentialId', (req, res, next) => {
 });
 
 /**
- * Authenticated: Register / Anchor cryptographic proof on-chain (Institutional or Admin relayer)
+ * Authenticated: Register / Anchor cryptographic proof on-chain.
+ * RESTRICTED TO ADMIN ONLY (TASK 2): Normal institutional issuance MUST use
+ * registerCredentialWithSignature via verified EIP-712 institutional signature.
+ * Direct registration without EIP-712 is restricted to owner-only administrative maintenance and controlled dev ops.
  */
-router.post('/register-proof', authenticate, authorize('INSTITUTION', 'ADMIN'), async (req, res, next) => {
+router.post('/register-proof', authenticate, authorize('ADMIN'), async (req, res, next) => {
   try {
     const { credentialId, sha256Digest } = req.body;
     if (!credentialId || !sha256Digest) {
