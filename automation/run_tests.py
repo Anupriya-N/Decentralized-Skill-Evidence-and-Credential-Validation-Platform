@@ -10,6 +10,8 @@ import os
 import argparse
 import subprocess
 import time
+import socket
+from urllib.parse import urlparse
 import requests
 from pathlib import Path
 
@@ -20,18 +22,24 @@ from utils.wait_helpers import wait_for_service
 
 def check_postgres():
     print("🔍 Checking PostgreSQL connectivity...")
-    # Via backend health endpoint
+    db_url = Config.DATABASE_URL
     try:
-        res = requests.get(f"{Config.BACKEND_URL}/health", timeout=3)
-        if res.status_code == 200:
-            db_status = res.json().get("subsystems", {}).get("database", {}).get("status")
-            if db_status == "connected":
-                print("  ✅ PostgreSQL is connected via Backend API")
-                return True
-    except Exception:
-        pass
-    print("  ⚠️ PostgreSQL direct probe waiting on backend service")
-    return True
+        parsed = urlparse(db_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 5432
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        if result == 0:
+            print(f"  ✅ PostgreSQL socket is reachable at {host}:{port}")
+            return True
+        else:
+            print(f"  ❌ PostgreSQL socket unreachable at {host}:{port} (socket code: {result})")
+            return False
+    except Exception as e:
+        print(f"  ❌ PostgreSQL connection check failed: {e}")
+        return False
 
 def ensure_backend_running():
     print(f"🔍 Checking Backend API at {Config.BACKEND_URL}...")
@@ -41,18 +49,20 @@ def ensure_backend_running():
 
     print("  🚀 Starting Backend server in background...")
     backend_dir = Path(__file__).parent.parent / "backend"
+    log_path = Config.REPORTS_DIR / "backend_server.log"
+    log_file = open(log_path, "w", encoding="utf-8")
+    
     process = subprocess.Popen(
         ["node", "src/server.js"],
         cwd=str(backend_dir),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True
+        stdout=log_file,
+        stderr=subprocess.STDOUT
     )
     if wait_for_service(f"{Config.BACKEND_URL}/health", timeout_sec=15):
         print("  ✅ Backend started successfully")
         return process
     else:
-        print("  ❌ Failed to reach Backend API within timeout")
+        print(f"  ❌ Failed to reach Backend API within timeout. Check logs at {log_path}")
         return process
 
 def ensure_frontend_running():
@@ -60,8 +70,22 @@ def ensure_frontend_running():
     if wait_for_service(Config.FRONTEND_URL, timeout_sec=3):
         print("  ✅ Frontend is already running")
         return None
-    print(f"  ℹ️ Frontend not detected at {Config.FRONTEND_URL} (UI browser tests may require `npm run dev` in frontend/)")
-    return None
+
+    print(f"  🚀 Starting Frontend server in background...")
+    frontend_dir = Path(__file__).parent.parent / "frontend"
+    npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+    process = subprocess.Popen(
+        [npm_cmd, "run", "dev"],
+        cwd=str(frontend_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    if wait_for_service(Config.FRONTEND_URL, timeout_sec=15):
+        print("  ✅ Frontend started successfully")
+        return process
+    else:
+        print(f"  ℹ️ Frontend not reachable within timeout. Continuing...")
+        return process
 
 def main():
     parser = argparse.ArgumentParser(description="CertiTrust Automated Test Runner")
@@ -76,12 +100,16 @@ def main():
     print(f"   Target Suite: {args.type.upper()}")
     print("==================================================================")
 
-    # 1. Environment checks
-    check_postgres()
+    # 1. Environment and database checks
+    pg_ok = check_postgres()
+    if not pg_ok:
+        print("  ⚠️ PostgreSQL check failed. Backend may not function correctly.")
+
     backend_proc = ensure_backend_running()
+    frontend_proc = None
     
     if args.type in ("all", "ui"):
-        ensure_frontend_running()
+        frontend_proc = ensure_frontend_running()
 
     # 2. Build pytest command
     report_file = Config.REPORTS_DIR / f"report_{args.type}.html"
@@ -111,6 +139,8 @@ def main():
 
     if backend_proc:
         backend_proc.terminate()
+    if frontend_proc:
+        frontend_proc.terminate()
 
     sys.exit(exit_code)
 

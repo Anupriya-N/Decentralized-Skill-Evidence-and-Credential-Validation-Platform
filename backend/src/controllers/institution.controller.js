@@ -284,7 +284,14 @@ export class InstitutionController {
 
         if (startingNonce !== null) {
           try {
-            const itemNonce = startingNonce + i;
+            // Retrieve actual on-chain nonce dynamically to handle failed transactions or consumed nonces safely
+            let itemNonce;
+            try {
+              itemNonce = await blockchainService.getNonce(signingWallet.address);
+            } catch (_) {
+              itemNonce = startingNonce + i;
+            }
+
             const deadline = Math.floor(Date.now() / 1000) + 3600;
 
             const domain = {

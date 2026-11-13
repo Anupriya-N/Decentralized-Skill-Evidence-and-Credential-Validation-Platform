@@ -53,16 +53,26 @@ export class JobsService {
   }
 
   /**
-   * Reconcile pending blockchain anchors against live network provider
+   * Reconcile pending blockchain anchors against live network provider.
+   * Handles both anchors with transaction hashes (receipt verification)
+   * and pending anchors without transaction hashes (on-chain readback and safe resubmission).
    */
   async reconcilePendingAnchors() {
     try {
       const pendingAnchors = await prisma.blockchainAnchor.findMany({
         where: {
           status: 'PENDING_BLOCKCHAIN',
-          transactionHash: { not: null },
         },
-        take: 5,
+        include: {
+          credential: {
+            include: {
+              issuer: {
+                include: { institutionProfile: true },
+              },
+            },
+          },
+        },
+        take: 10,
       });
 
       if (!pendingAnchors.length) {
@@ -72,43 +82,77 @@ export class JobsService {
       let reconciledCount = 0;
 
       for (const anchor of pendingAnchors) {
-        if (!anchor.transactionHash || anchor.transactionHash.startsWith('simulated_')) {
-          continue;
-        }
-
         try {
           if (!blockchainService.provider) break;
 
-          // Quick 2.5-second timeout to avoid RPC hang
-          const receiptPromise = blockchainService.provider.getTransactionReceipt(anchor.transactionHash);
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('RPC query timeout')), 2500)
-          );
+          // Case A: Anchor has an existing transaction hash -> check receipt
+          if (anchor.transactionHash && !anchor.transactionHash.startsWith('simulated_')) {
+            const receiptPromise = blockchainService.provider.getTransactionReceipt(anchor.transactionHash);
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('RPC query timeout')), 2500)
+            );
 
-          const receipt = await Promise.race([receiptPromise, timeoutPromise]);
-          if (receipt) {
-            if (receipt.status === 1) {
+            const receipt = await Promise.race([receiptPromise, timeoutPromise]);
+            if (receipt) {
+              if (receipt.status === 1) {
+                await prisma.blockchainAnchor.update({
+                  where: { id: anchor.id },
+                  data: {
+                    isConfirmed: true,
+                    status: 'CONFIRMED',
+                    blockNumber: BigInt(receipt.blockNumber),
+                    gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed) : null,
+                  },
+                });
+                reconciledCount++;
+              } else if (receipt.status === 0) {
+                await prisma.blockchainAnchor.update({
+                  where: { id: anchor.id },
+                  data: {
+                    status: 'FAILED',
+                  },
+                });
+              }
+            }
+          } 
+          // Case B: Anchor lacks transaction hash -> read on-chain state first, then attempt safe recovery
+          else if (!anchor.transactionHash && anchor.credential) {
+            const cred = anchor.credential;
+            const expectedIssuer = cred.issuer?.walletAddress || cred.issuer?.institutionProfile?.signingPublicKey;
+
+            const onChainPromise = blockchainService.verifyOnChain(cred.credentialHash, expectedIssuer);
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('RPC verify timeout')), 2500)
+            );
+
+            const onChain = await Promise.race([onChainPromise, timeoutPromise]);
+            if (onChain.checked && onChain.exists) {
               await prisma.blockchainAnchor.update({
                 where: { id: anchor.id },
                 data: {
                   isConfirmed: true,
                   status: 'CONFIRMED',
-                  blockNumber: BigInt(receipt.blockNumber),
-                  gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed) : null,
                 },
               });
               reconciledCount++;
-            } else if (receipt.status === 0) {
-              await prisma.blockchainAnchor.update({
-                where: { id: anchor.id },
-                data: {
-                  status: 'FAILED',
-                },
-              });
+            } else if (blockchainService.isConfigured) {
+              // Attempt bounded resubmission via relayer
+              const resubmit = await blockchainService.anchorCredential(cred.credentialHash, cred.issuerId);
+              if (resubmit.success) {
+                await prisma.blockchainAnchor.update({
+                  where: { id: anchor.id },
+                  data: {
+                    transactionHash: resubmit.transactionHash,
+                    blockNumber: resubmit.blockNumber ? BigInt(resubmit.blockNumber) : null,
+                    isConfirmed: true,
+                    status: 'CONFIRMED',
+                  },
+                });
+                reconciledCount++;
+              }
             }
           }
         } catch (txErr) {
-          // If RPC is throwing 522/offline or timeout, abort remaining checks for this cycle
           console.warn(`JobsService: anchor ${anchor.id} tx check skipped:`, txErr.message);
           break;
         }

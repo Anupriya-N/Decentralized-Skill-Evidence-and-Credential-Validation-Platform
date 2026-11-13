@@ -23,6 +23,7 @@ import verificationRoutes from './routes/verification.routes.js';
 import aiRoutes from './routes/ai.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import blockchainRoutes from './routes/blockchain.routes.js';
 
 // Universal BigInt serialization for Prisma BigInt fields
 BigInt.prototype.toJSON = function () {
@@ -135,6 +136,7 @@ const apiRouters = [
   { path: '/ai', router: aiRoutes },
   { path: '/admin', router: adminRoutes },
   { path: '/notifications', router: notificationRoutes },
+  { path: '/blockchain', router: blockchainRoutes },
 ];
 
 apiRouters.forEach(({ path: routePath, router }) => {

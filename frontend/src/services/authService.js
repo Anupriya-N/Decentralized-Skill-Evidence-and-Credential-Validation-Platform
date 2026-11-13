@@ -41,9 +41,12 @@ export const authService = {
     return storageService.getCurrentUser();
   },
 
+  /**
+   * Production-grade authentication against the real backend API.
+   * Never silently falls back to prototype accounts.
+   */
   async login(email, password) {
     try {
-      // First attempt real live API login
       const res = await apiClient.post('/auth/login', { email, password });
       if (res && res.data && res.data.accessToken) {
         apiClient.setToken(res.data.accessToken);
@@ -54,29 +57,18 @@ export const authService = {
         storageService.setCurrentUser(normalized);
         return normalized;
       }
+      throw new Error('Authentication response did not contain access token.');
     } catch (apiErr) {
-      if (apiErr.status && apiErr.status < 500) {
+      if (apiErr.status) {
         throw new Error(apiErr.data?.message || apiErr.data?.error || apiErr.message || 'Invalid credentials.');
       }
-      console.warn('[authService] Backend API not reachable. Checking local prototype store:', apiErr.message);
+      throw new Error(`Unable to reach CertiTrust authentication server: ${apiErr.message || 'Connection refused'}`);
     }
-
-    // Local prototype fallback
-    const users = storageService.getUsers();
-    const user = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
-    if (!user) {
-      throw new Error('Account not found with this email.');
-    }
-    if (user.password !== password) {
-      throw new Error('Invalid password. Please check your credentials.');
-    }
-    if (user.accountStatus === 'suspended') {
-      throw new Error('Account has been suspended. Please contact platform administration.');
-    }
-    storageService.setCurrentUser(user);
-    return user;
   },
 
+  /**
+   * User registration via the real backend API.
+   */
   async register(userData) {
     const backendRole = ROLE_MAP_TO_BACKEND[userData.role] || 'STUDENT';
     const payload = {
@@ -99,75 +91,29 @@ export const authService = {
         storageService.setCurrentUser(normalized);
         return normalized;
       }
+      throw new Error('Registration did not return valid session tokens.');
     } catch (apiErr) {
-      if (apiErr.status && apiErr.status < 500) {
+      if (apiErr.status) {
         throw new Error(apiErr.data?.message || apiErr.data?.error || apiErr.message || 'Registration failed.');
       }
-      console.warn('[authService] Backend API not reachable during register. Utilizing local fallback:', apiErr.message);
+      throw new Error(`Unable to reach CertiTrust server during registration: ${apiErr.message || 'Connection refused'}`);
     }
-
-    // Local prototype fallback
-    const users = storageService.getUsers();
-    const existing = users.find(u => u.email.toLowerCase() === userData.email.trim().toLowerCase());
-    if (existing) {
-      throw new Error('An account with this email address already exists.');
-    }
-
-    const newUser = {
-      id: `user-${Date.now()}`,
-      fullName: userData.fullName,
-      email: userData.email,
-      password: userData.password,
-      role: userData.role || 'student',
-      college: userData.college || '',
-      department: userData.department || '',
-      bio: userData.bio || '',
-      profileImage: userData.profileImage || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
-      accountStatus: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isPortfolioPublic: true
-    };
-
-    const updatedUsers = [...users, newUser];
-    storageService.setUsers(updatedUsers);
-    storageService.setCurrentUser(newUser);
-
-    if (newUser.role === 'issuer') {
-      const issuers = storageService.getIssuers();
-      const newIssuer = {
-        id: `iss-${Date.now()}`,
-        organizationName: userData.organizationName || userData.fullName,
-        organizationType: userData.organizationType || 'Educational Institution',
-        email: userData.email,
-        website: userData.website || '',
-        description: userData.description || '',
-        proofDocumentName: 'Accreditation_Proof.pdf',
-        trustStatus: 'pending',
-        reviewedBy: null,
-        reviewedAt: null,
-        reviewReason: 'New self-service registration pending review.',
-        createdAt: new Date().toISOString(),
-        credentialsIssuedCount: 0
-      };
-      storageService.setIssuers([...issuers, newIssuer]);
-    }
-
-    return newUser;
   },
 
+  /**
+   * Clears tokens and session state.
+   */
   async logout() {
     try {
       await apiClient.post('/auth/logout', {});
     } catch (_) {}
-    apiClient.setToken(null);
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('certitrust_refresh_token');
-      localStorage.removeItem('certitrust_current_user_v1');
-    }
+    apiClient.clearSession();
     return true;
   },
 
+  /**
+   * Dedicated Demo switcher for offline academic defense only.
+   */
   switchDemoUser(role) {
     const users = storageService.getUsers();
     const target = users.find(u => u.role === role) || users[0];
