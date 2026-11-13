@@ -734,6 +734,71 @@ export class CredentialController {
       next(error);
     }
   }
+
+  /**
+   * Update credential non-cryptographic metadata (description, visibility)
+   * Strictly preserves original cryptographic credentialHash and Merkle root.
+   */
+  async updateMetadata(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { description, visibility, title } = req.body;
+
+      const credential = await prisma.credential.findFirst({
+        where: {
+          OR: [{ id }, { certificateNumber: id }],
+        },
+      });
+
+      if (!credential) {
+        throw new NotFoundError('Credential not found');
+      }
+
+      // Authorization: Recipient student, issuing institution, or admin
+      const isOwner = credential.studentId === req.user.id;
+      const isIssuer = credential.issuerId === req.user.id;
+      const isAdmin = req.user.role === 'ADMIN';
+
+      if (!isOwner && !isIssuer && !isAdmin) {
+        throw new ForbiddenError('Unauthorized to update this credential metadata');
+      }
+
+      const updateData = {};
+      if (description !== undefined) updateData.description = description;
+      if (title !== undefined && (isIssuer || isAdmin)) updateData.title = title;
+      if (visibility !== undefined) {
+        const currentMeta = typeof credential.metadata === 'object' && credential.metadata !== null
+          ? credential.metadata
+          : {};
+        updateData.metadata = { ...currentMeta, visibility };
+      }
+
+      const updated = await prisma.credential.update({
+        where: { id: credential.id },
+        data: updateData,
+        include: {
+          student: { select: { id: true, name: true, walletAddress: true } },
+          issuer: {
+            select: {
+              id: true,
+              name: true,
+              walletAddress: true,
+              institutionProfile: { select: { institutionName: true, isAccredited: true } },
+            },
+          },
+          blockchainAnchor: true,
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Credential metadata updated successfully',
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const credentialController = new CredentialController();

@@ -28,4 +28,8 @@ router.get('/:id', (req, res, next) =>
   credentialController.getById(req, res, next)
 );
 
+router.patch('/:id', authenticate, (req, res, next) =>
+  credentialController.updateMetadata(req, res, next)
+);
+
 export default router;

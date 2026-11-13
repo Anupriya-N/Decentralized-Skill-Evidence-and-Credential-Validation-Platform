@@ -145,11 +145,14 @@ export class BlockchainService {
       return {
         success: false,
         isConfirmed: false,
-        status: 'INVALID_HASH_FORMAT',
-        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'INVALID_HASH_FORMAT',
+        error: 'Credential hash must be a valid 32-byte hexadecimal string',
+        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
 
@@ -157,11 +160,14 @@ export class BlockchainService {
       return {
         success: false,
         isConfirmed: false,
-        status: 'PENDING_BLOCKCHAIN',
-        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'PENDING_BLOCKCHAIN',
+        error: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
+        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
 
@@ -171,11 +177,14 @@ export class BlockchainService {
         return {
           success: false,
           isConfirmed: false,
-          status: 'CHAIN_MISMATCH',
-          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
           transactionHash: null,
           blockNumber: null,
-          contractAddress: null,
+          credentialHash: credentialHash || null,
+          issuerAddress: issuerAddress || null,
+          status: 'CHAIN_MISMATCH',
+          error: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          contractAddress: env.CONTRACT_ADDRESS || null,
         };
       }
 
@@ -194,10 +203,14 @@ export class BlockchainService {
         return {
           success: false,
           isConfirmed: false,
-          status: 'FAILED',
-          reason: 'Blockchain transaction reverted or receipt status failed',
           transactionHash: receipt?.hash || null,
           blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+          credentialHash: formattedHash,
+          issuerAddress: issuerAddress || null,
+          status: 'FAILED',
+          error: 'Blockchain transaction reverted or receipt status failed',
+          reason: 'Blockchain transaction reverted or receipt status failed',
+          contractAddress: env.CONTRACT_ADDRESS,
         };
       }
 
@@ -209,23 +222,29 @@ export class BlockchainService {
       return {
         success: isConfirmed,
         isConfirmed,
-        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
+        credentialHash: formattedHash,
+        issuerAddress: onChainIssuer,
+        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
+        error: isConfirmed ? null : 'On-chain readback failed verification',
+        reason: isConfirmed ? null : 'On-chain readback failed verification',
         gasUsed: BigInt(receipt.gasUsed || 0),
         network: 'Ethereum Sepolia',
         contractAddress: env.CONTRACT_ADDRESS,
-        issuer: onChainIssuer,
       };
     } catch (error) {
       return {
         success: false,
         isConfirmed: false,
-        status: 'FAILED',
-        reason: error.message,
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'FAILED',
+        error: error.message,
+        reason: error.message,
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
   }
@@ -243,11 +262,14 @@ export class BlockchainService {
       return {
         success: false,
         isConfirmed: false,
-        status: 'INVALID_HASH_FORMAT',
-        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: expectedIssuerAddress || null,
+        status: 'INVALID_HASH_FORMAT',
+        error: 'Credential hash must be a valid 32-byte hexadecimal string',
+        reason: 'Credential hash must be a valid 32-byte hexadecimal string',
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
 
@@ -255,11 +277,14 @@ export class BlockchainService {
       return {
         success: false,
         isConfirmed: false,
-        status: 'PENDING_BLOCKCHAIN',
-        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: expectedIssuerAddress || null,
+        status: 'PENDING_BLOCKCHAIN',
+        error: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
+        reason: 'Sepolia relayer wallet or contract address not deployed or configured in environment',
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
 
@@ -270,11 +295,14 @@ export class BlockchainService {
         return {
           success: false,
           isConfirmed: false,
-          status: 'CHAIN_MISMATCH',
-          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
           transactionHash: null,
           blockNumber: null,
-          contractAddress: null,
+          credentialHash: credentialHash || null,
+          issuerAddress: expectedIssuerAddress || null,
+          status: 'CHAIN_MISMATCH',
+          error: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          reason: `Connected chain ID ${network.chainId} does not match configured chain ID ${env.CHAIN_ID}`,
+          contractAddress: env.CONTRACT_ADDRESS || null,
         };
       }
 
@@ -287,10 +315,14 @@ export class BlockchainService {
         return {
           success: false,
           isConfirmed: false,
-          status: 'FAILED',
-          reason: 'Blockchain transaction reverted or receipt status failed',
           transactionHash: receipt?.hash || null,
           blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+          credentialHash: formattedHash,
+          issuerAddress: expectedIssuerAddress || null,
+          status: 'FAILED',
+          error: 'Blockchain transaction reverted or receipt status failed',
+          reason: 'Blockchain transaction reverted or receipt status failed',
+          contractAddress: env.CONTRACT_ADDRESS,
         };
       }
 
@@ -306,9 +338,13 @@ export class BlockchainService {
       return {
         success: isConfirmed,
         isConfirmed,
-        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
+        credentialHash: formattedHash,
+        issuerAddress: onChainIssuer,
+        status: isConfirmed ? 'CONFIRMED' : 'FAILED_ON_CHAIN_READBACK',
+        error: isConfirmed ? null : 'On-chain readback failed verification',
+        reason: isConfirmed ? null : 'On-chain readback failed verification',
         gasUsed: BigInt(receipt.gasUsed || 0),
         network: 'Ethereum Sepolia',
         contractAddress: env.CONTRACT_ADDRESS,
@@ -317,11 +353,14 @@ export class BlockchainService {
       return {
         success: false,
         isConfirmed: false,
-        status: 'FAILED',
-        reason: error.message,
         transactionHash: null,
         blockNumber: null,
-        contractAddress: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: expectedIssuerAddress || null,
+        status: 'FAILED',
+        error: error.message,
+        reason: error.message,
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     }
   }
@@ -399,11 +438,31 @@ export class BlockchainService {
     await this.ensureInitialized();
 
     if (!validateBytes32Hash(credentialHash)) {
-      return { success: false, isConfirmed: false, reason: 'Invalid credential hash format' };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'INVALID_HASH_FORMAT',
+        error: 'Invalid credential hash format',
+        reason: 'Invalid credential hash format',
+      };
     }
 
     if (!this.isConfigured || !this.contract) {
-      return { success: false, isConfirmed: false, reason: 'Blockchain relayer wallet or contract not configured' };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'PENDING_BLOCKCHAIN',
+        error: 'Blockchain relayer wallet or contract not configured',
+        reason: 'Blockchain relayer wallet or contract not configured',
+      };
     }
 
     try {
@@ -419,7 +478,17 @@ export class BlockchainService {
       const receipt = await tx.wait(1);
 
       if (!receipt || receipt.status !== 1) {
-        return { success: false, isConfirmed: false, reason: 'Transaction reverted or receipt status failed' };
+        return {
+          success: false,
+          isConfirmed: false,
+          transactionHash: receipt?.hash || null,
+          blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+          credentialHash: formattedHash,
+          issuerAddress: issuerAddress || null,
+          status: 'FAILED',
+          error: 'Transaction reverted or receipt status failed',
+          reason: 'Transaction reverted or receipt status failed',
+        };
       }
 
       // Read back to confirm state
@@ -431,9 +500,24 @@ export class BlockchainService {
         isConfirmed: isRevokedConfirmed,
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
+        credentialHash: formattedHash,
+        issuerAddress: issuerAddress || null,
+        status: isRevokedConfirmed ? 'REVOKED' : 'FAILED_ON_CHAIN_REVOCATION',
+        error: isRevokedConfirmed ? null : 'Smart contract verifyCredential did not return revoked=true',
+        reason: isRevokedConfirmed ? null : 'Smart contract verifyCredential did not return revoked=true',
       };
     } catch (error) {
-      return { success: false, isConfirmed: false, error: error.message };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: issuerAddress || null,
+        status: 'FAILED',
+        error: error.message,
+        reason: error.message,
+      };
     }
   }
 
@@ -444,11 +528,31 @@ export class BlockchainService {
     await this.ensureInitialized();
 
     if (!validateBytes32Hash(credentialHash)) {
-      return { success: false, isConfirmed: false, reason: 'Invalid credential hash format' };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: null,
+        status: 'INVALID_HASH_FORMAT',
+        error: 'Invalid credential hash format',
+        reason: 'Invalid credential hash format',
+      };
     }
 
     if (!this.isConfigured || !this.contract) {
-      return { success: false, isConfirmed: false, reason: 'Blockchain relayer wallet or contract not configured' };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: null,
+        status: 'PENDING_BLOCKCHAIN',
+        error: 'Blockchain relayer wallet or contract not configured',
+        reason: 'Blockchain relayer wallet or contract not configured',
+      };
     }
 
     try {
@@ -459,6 +563,12 @@ export class BlockchainService {
         return {
           success: false,
           isConfirmed: false,
+          transactionHash: null,
+          blockNumber: null,
+          credentialHash: credentialHash || null,
+          issuerAddress: relayerAddress,
+          status: 'UNAUTHORIZED_CALLER',
+          error: `Relayer wallet (${relayerAddress}) is not the contract owner (${ownerAddress}). Direct revocation requires contract owner permissions.`,
           reason: `Relayer wallet (${relayerAddress}) is not the contract owner (${ownerAddress}). Direct revocation requires contract owner permissions.`,
         };
       }
@@ -469,7 +579,17 @@ export class BlockchainService {
       const receipt = await tx.wait(1);
 
       if (!receipt || receipt.status !== 1) {
-        return { success: false, isConfirmed: false, reason: 'Transaction reverted or receipt status failed' };
+        return {
+          success: false,
+          isConfirmed: false,
+          transactionHash: receipt?.hash || null,
+          blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null,
+          credentialHash: formattedHash,
+          issuerAddress: relayerAddress,
+          status: 'FAILED',
+          error: 'Transaction reverted or receipt status failed',
+          reason: 'Transaction reverted or receipt status failed',
+        };
       }
 
       // Read back to confirm state
@@ -481,9 +601,24 @@ export class BlockchainService {
         isConfirmed: isRevokedConfirmed,
         transactionHash: receipt.hash,
         blockNumber: BigInt(receipt.blockNumber),
+        credentialHash: formattedHash,
+        issuerAddress: relayerAddress,
+        status: isRevokedConfirmed ? 'REVOKED' : 'FAILED_ON_CHAIN_REVOCATION',
+        error: isRevokedConfirmed ? null : 'Smart contract verifyCredential did not return revoked=true',
+        reason: isRevokedConfirmed ? null : 'Smart contract verifyCredential did not return revoked=true',
       };
     } catch (error) {
-      return { success: false, isConfirmed: false, error: error.message };
+      return {
+        success: false,
+        isConfirmed: false,
+        transactionHash: null,
+        blockNumber: null,
+        credentialHash: credentialHash || null,
+        issuerAddress: null,
+        status: 'FAILED',
+        error: error.message,
+        reason: error.message,
+      };
     }
   }
 }

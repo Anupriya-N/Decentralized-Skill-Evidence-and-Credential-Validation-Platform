@@ -95,21 +95,51 @@ export class JobsService {
             const receipt = await Promise.race([receiptPromise, timeoutPromise]);
             if (receipt) {
               if (receipt.status === 1) {
-                await prisma.blockchainAnchor.update({
-                  where: { id: anchor.id },
-                  data: {
-                    isConfirmed: true,
-                    status: 'CONFIRMED',
-                    blockNumber: BigInt(receipt.blockNumber),
-                    gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed) : null,
-                  },
-                });
-                reconciledCount++;
+                // Priority 3.1: Never treat a transaction receipt by itself as proof that the correct credential was anchored.
+                // Perform complete on-chain readback verification
+                const cred = anchor.credential;
+                const expectedIssuer = cred?.issuer?.walletAddress || cred?.issuer?.institutionProfile?.signingPublicKey;
+
+                let onChain = { checked: false, exists: false };
+                if (cred) {
+                  try {
+                    const onChainPromise = blockchainService.verifyOnChain(cred.credentialHash, expectedIssuer);
+                    const timeoutPromise = new Promise((_, reject) =>
+                      setTimeout(() => reject(new Error('RPC verify timeout during receipt reconciliation')), 2500)
+                    );
+                    onChain = await Promise.race([onChainPromise, timeoutPromise]);
+                  } catch (vErr) {
+                    console.warn(`JobsService: onChain readback check timed out for anchor ${anchor.id}:`, vErr.message);
+                  }
+                }
+
+                if (onChain.checked && onChain.exists && !onChain.revoked && (onChain.isIssuerMatch || !expectedIssuer)) {
+                  await prisma.blockchainAnchor.update({
+                    where: { id: anchor.id },
+                    data: {
+                      isConfirmed: true,
+                      status: 'CONFIRMED',
+                      blockNumber: BigInt(receipt.blockNumber),
+                      gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed) : null,
+                    },
+                  });
+                  reconciledCount++;
+                } else {
+                  console.warn(`JobsService: Anchor ${anchor.id} receipt confirmed, but on-chain readback verification failed:`, onChain.status);
+                  await prisma.blockchainAnchor.update({
+                    where: { id: anchor.id },
+                    data: {
+                      status: 'FAILED_ON_CHAIN_READBACK',
+                      isConfirmed: false,
+                    },
+                  });
+                }
               } else if (receipt.status === 0) {
                 await prisma.blockchainAnchor.update({
                   where: { id: anchor.id },
                   data: {
                     status: 'FAILED',
+                    isConfirmed: false,
                   },
                 });
               }

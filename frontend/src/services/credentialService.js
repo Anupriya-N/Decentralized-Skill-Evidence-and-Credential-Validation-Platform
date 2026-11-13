@@ -144,6 +144,35 @@ export const credentialService = {
       }
     }
 
+    // Attempt real backend credential issuance if studentId or studentEmail provided
+    if (credentialData.studentId || credentialData.studentEmail) {
+      try {
+        const issuePayload = {
+          studentId: credentialData.studentId,
+          studentEmail: credentialData.studentEmail,
+          evidenceId: backendEvidence?.id || credentialData.evidenceId,
+          title: credentialData.title,
+          description: credentialData.description || '',
+          type: credentialData.category || credentialData.type || 'CERTIFICATE',
+          skills: credentialData.skillName ? [credentialData.skillName] : [],
+          expiresAt: credentialData.expiryDate || null
+        };
+
+        const res = await apiClient.post('/credentials', issuePayload);
+        if (res && res.data) {
+          const mapped = mapBackendCredential(res.data);
+          const updatedList = [mapped, ...creds.filter(c => c.id !== mapped.id)];
+          storageService.setCredentials(updatedList);
+          return mapped;
+        }
+      } catch (issueErr) {
+        console.warn('Real backend credential issuance notice:', issueErr.message);
+        if (apiClient.getToken()) {
+          throw new Error(issueErr.data?.message || issueErr.message || 'Failed to issue credential via backend API');
+        }
+      }
+    }
+
     const matchedIssuer = issuers.find(i => 
       i.id === credentialData.issuerId || 
       i.organizationName?.toLowerCase() === (credentialData.issuer || '').toLowerCase()
@@ -155,7 +184,7 @@ export const credentialService = {
 
     const currentYear = new Date().getFullYear();
     const randomDigits = Math.floor(1000 + Math.random() * 9000);
-    const credentialId = `CRED-${currentYear}-${randomDigits}`;
+    const credentialId = backendEvidence?.certificateNumber || (backendEvidence ? `CRED-${backendEvidence.id.slice(0, 8)}` : `CRED-${currentYear}-${randomDigits}`);
 
     const newCredential = {
       id: backendEvidence?.id || `cred-${Date.now()}`,
@@ -169,22 +198,22 @@ export const credentialService = {
       issuerName,
       issueDate: credentialData.issueDate || new Date().toISOString().split('T')[0],
       expiryDate: credentialData.expiryDate || null,
-      fileName: fileObject?.name || 'credential_evidence.pdf',
-      mimeType: fileObject?.type || 'application/pdf',
-      fileSize: fileObject?.size || 1024000,
-      fileStorageKey: `evidence/${credentialId}_${fileObject?.name || 'doc.pdf'}`,
+      fileName: backendEvidence?.originalName || fileObject?.name || 'credential_evidence.pdf',
+      mimeType: backendEvidence?.mimeType || fileObject?.type || 'application/pdf',
+      fileSize: backendEvidence?.fileSize || fileObject?.size || 1024000,
+      fileStorageKey: backendEvidence?.storageKey || `evidence/${credentialId}_${fileObject?.name || 'doc.pdf'}`,
       fileHashAlgorithm: 'SHA-256',
-      fileHash: computedSha256,
+      fileHash: backendEvidence?.fileHash || computedSha256,
       integrityStatus: 'verified',
       issuerStatus: issuerStatus,
       credentialStatus: 'active',
       visibility: credentialData.visibility || 'public',
       version: 1,
-      createdAt: new Date().toISOString(),
+      createdAt: backendEvidence?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       blockchainProof: {
         network: 'Ethereum Sepolia',
-        registeredDigest: computedSha256,
+        registeredDigest: backendEvidence?.fileHash || computedSha256,
         issuerReference: issuerId,
         registrationStatus: 'pending_on_chain',
         registeredAt: new Date().toISOString(),
@@ -226,21 +255,42 @@ export const credentialService = {
 
   updateCredentialMetadata(id, updateData) {
     const creds = storageService.getCredentials();
-    const index = creds.findIndex(c => c.id === id);
+    const index = creds.findIndex(c => c.id === id || c.credentialId === id);
     if (index === -1) throw new Error('Credential not found.');
 
+    const target = creds[index];
     const updated = {
-      ...creds[index],
-      title: updateData.title || creds[index].title,
-      skillName: updateData.skillName || creds[index].skillName,
-      category: updateData.category || creds[index].category,
-      description: updateData.description !== undefined ? updateData.description : creds[index].description,
-      visibility: updateData.visibility || creds[index].visibility,
+      ...target,
+      title: updateData.title || target.title,
+      skillName: updateData.skillName || target.skillName,
+      category: updateData.category || target.category,
+      description: updateData.description !== undefined ? updateData.description : target.description,
+      visibility: updateData.visibility || target.visibility,
       updatedAt: new Date().toISOString()
     };
 
     creds[index] = updated;
     storageService.setCredentials(creds);
+
+    // Call real backend PATCH /credentials/:id to persist metadata
+    apiClient.patch(`/credentials/${encodeURIComponent(target.id || id)}`, {
+      title: updateData.title,
+      description: updateData.description,
+      visibility: updateData.visibility
+    }).then(res => {
+      if (res?.data) {
+        const mapped = mapBackendCredential(res.data);
+        const currentCreds = storageService.getCredentials();
+        const cIdx = currentCreds.findIndex(c => c.id === id || c.credentialId === id);
+        if (cIdx !== -1) {
+          currentCreds[cIdx] = { ...currentCreds[cIdx], ...mapped };
+          storageService.setCredentials(currentCreds);
+        }
+      }
+    }).catch(err => {
+      console.warn('Real backend PATCH /credentials metadata update notice:', err.message);
+    });
+
     return updated;
   },
 
