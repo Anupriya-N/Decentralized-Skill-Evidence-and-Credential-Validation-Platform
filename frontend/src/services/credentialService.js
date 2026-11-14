@@ -46,23 +46,30 @@ function mapBackendCredential(c) {
 }
 
 export const credentialService = {
+  async prepareIssuance(credentialParams) {
+    const res = await apiClient.post('/credentials/prepare', credentialParams);
+    if (!res || !res.success || !res.data) {
+      throw new Error(res?.message || 'Failed to prepare canonical credential for signing');
+    }
+    return res.data;
+  },
+
   async getAllCredentials() {
     try {
       const res = await apiClient.get('/credentials/my');
       if (res && res.data && Array.isArray(res.data.credentials)) {
-        const mapped = res.data.credentials.map(mapBackendCredential);
-        const localCreds = storageService.getCredentials();
-        const merged = [...mapped];
-        for (const lc of localCreds) {
-          if (!merged.some(m => m.id === lc.id || m.credentialId === lc.credentialId)) {
-            merged.push(lc);
-          }
-        }
-        storageService.setCredentials(merged);
-        return merged;
+        return res.data.credentials.map(mapBackendCredential);
       }
-    } catch (_) {}
-    return storageService.getCredentials();
+    } catch (err) {
+      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+        return storageService.getCredentials();
+      }
+      throw err;
+    }
+    if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+      return storageService.getCredentials();
+    }
+    return [];
   },
 
   async getCredentialById(idOrCredentialId) {
@@ -71,9 +78,14 @@ export const credentialService = {
       if (res && res.data) {
         return mapBackendCredential(res.data);
       }
-    } catch (_) {}
-    const creds = storageService.getCredentials();
-    return creds.find(c => c.id === idOrCredentialId || c.credentialId === idOrCredentialId) || null;
+    } catch (err) {
+      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+        const creds = storageService.getCredentials();
+        return creds.find(c => c.id === idOrCredentialId || c.credentialId === idOrCredentialId) || null;
+      }
+      throw err;
+    }
+    return null;
   },
 
   async getUserCredentials(userId) {
@@ -82,9 +94,14 @@ export const credentialService = {
       if (res && res.data && Array.isArray(res.data.credentials)) {
         return res.data.credentials.map(mapBackendCredential);
       }
-    } catch (_) {}
-    const creds = storageService.getCredentials();
-    return creds.filter(c => c.ownerUserId === userId);
+    } catch (err) {
+      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+        const creds = storageService.getCredentials();
+        return creds.filter(c => c.ownerUserId === userId);
+      }
+      throw err;
+    }
+    return [];
   },
 
   async createCredential(credentialData, fileObject, computedSha256) {
@@ -150,14 +167,22 @@ export const credentialService = {
         const issuePayload = {
           studentId: credentialData.studentId,
           studentEmail: credentialData.studentEmail,
+          recipientId: credentialData.recipientId || credentialData.studentId,
           evidenceId: backendEvidence?.id || credentialData.evidenceId,
           title: credentialData.title,
           description: credentialData.description || '',
           type: credentialData.category || credentialData.type || 'CERTIFICATE',
           skills: credentialData.skillName ? [credentialData.skillName] : [],
           expiresAt: credentialData.expiryDate || null,
-          eip712Signature: credentialData.eip712Signature || credentialData.metaMaskSignature || null,
-          metaMaskSignature: credentialData.metaMaskSignature || credentialData.eip712Signature || null,
+          certificateNumber: credentialData.certificateNumber,
+          issuedAt: credentialData.issuedAt,
+          normalizedPayload: credentialData.normalizedPayload,
+          credentialHash: credentialData.credentialHash,
+          eip712Auth: credentialData.eip712Auth,
+          eip712Signature: credentialData.eip712Signature || credentialData.metaMaskSignature || credentialData.eip712Auth?.signature || null,
+          metaMaskSignature: credentialData.metaMaskSignature || credentialData.eip712Signature || credentialData.eip712Auth?.signature || null,
+          eip712Nonce: credentialData.eip712Nonce !== undefined ? credentialData.eip712Nonce : credentialData.eip712Auth?.nonce,
+          eip712Deadline: credentialData.eip712Deadline !== undefined ? credentialData.eip712Deadline : credentialData.eip712Auth?.deadline,
         };
 
         const res = await apiClient.post('/credentials', issuePayload);
@@ -296,18 +321,32 @@ export const credentialService = {
     return updated;
   },
 
-  async revokeCredential(id, reason, actorUserId = 'admin', metaMaskSignature = null) {
+  async revokeCredential(id, reason, actorUserId = 'admin', metaMaskAuthOrSig = null) {
     const creds = storageService.getCredentials();
     const index = creds.findIndex(c => c.id === id || c.credentialId === id);
     const targetCred = index !== -1 ? creds[index] : null;
     const lookupId = targetCred ? targetCred.id : id;
 
-    // Backend is the source of truth - no fallback to REVOKE_CONFIRMED on failure (Task 4)
-    const backendResult = await apiClient.post(`/credentials/${encodeURIComponent(lookupId)}/revoke`, {
+    const payload = {
       reason: reason || 'Revoked by authorized institution',
-      eip712Signature: metaMaskSignature,
-      metaMaskSignature,
-    });
+    };
+
+    if (metaMaskAuthOrSig) {
+      if (typeof metaMaskAuthOrSig === 'object' && metaMaskAuthOrSig.signature) {
+        payload.eip712Auth = metaMaskAuthOrSig;
+        payload.eip712Signature = metaMaskAuthOrSig.signature;
+        payload.metaMaskSignature = metaMaskAuthOrSig.signature;
+        payload.eip712Nonce = metaMaskAuthOrSig.nonce;
+        payload.eip712Deadline = metaMaskAuthOrSig.deadline;
+        payload.credentialHash = metaMaskAuthOrSig.credentialHash;
+      } else {
+        payload.eip712Signature = metaMaskAuthOrSig;
+        payload.metaMaskSignature = metaMaskAuthOrSig;
+      }
+    }
+
+    // Backend is the source of truth - no fallback to REVOKE_CONFIRMED on failure (Task 4)
+    const backendResult = await apiClient.post(`/credentials/${encodeURIComponent(lookupId)}/revoke`, payload);
 
     if (!backendResult || !backendResult.success) {
       throw new Error(backendResult?.message || 'Backend rejected credential revocation');

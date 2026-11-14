@@ -28,15 +28,14 @@ export const IssuedCredentialsPage = () => {
 
     setRevokingLoading(true);
     try {
-      let metaMaskSignature = null;
+      let signedRevokeAuth = null;
       const account = walletService.getConnectedAccount();
       const targetHash = revokingCred.fileHash || revokingCred.credentialHash || revokingCred.blockchainProof?.registeredDigest;
 
       if (account && targetHash) {
         toast.loading('Please sign EIP-712 RevokeAuthorization in MetaMask...', { id: 'mm-revoke' });
         try {
-          const signed = await walletService.signRevokeAuthorization(targetHash);
-          metaMaskSignature = signed.signature;
+          signedRevokeAuth = await walletService.signRevokeAuthorization(targetHash);
           toast.success('MetaMask EIP-712 revocation signed!', { id: 'mm-revoke' });
         } catch (signErr) {
           toast.dismiss('mm-revoke');
@@ -46,7 +45,7 @@ export const IssuedCredentialsPage = () => {
         }
       }
 
-      await revokeCredentialAction(revokingCred.id, revokeReason.trim(), user, metaMaskSignature);
+      await revokeCredentialAction(revokingCred.id, revokeReason.trim(), user, signedRevokeAuth);
       setRevokingCred(null);
       setRevokeReason('');
     } catch (err) {

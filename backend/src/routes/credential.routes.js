@@ -4,6 +4,10 @@ import { authenticate, authorize } from '../middleware/auth.middleware.js';
 
 const router = Router();
 
+router.post('/prepare', authenticate, authorize('INSTITUTION', 'ADMIN'), (req, res, next) =>
+  credentialController.prepareIssuance(req, res, next)
+);
+
 router.post('/', authenticate, authorize('INSTITUTION', 'ADMIN'), (req, res, next) =>
   credentialController.issue(req, res, next)
 );

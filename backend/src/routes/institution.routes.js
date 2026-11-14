@@ -18,6 +18,11 @@ router.get('/wallet/challenge', (req, res, next) => institutionController.getWal
 router.post('/wallet/link', (req, res, next) => institutionController.linkWallet(req, res, next));
 router.get('/eip712-params', (req, res, next) => institutionController.getEip712Params(req, res, next));
 router.post('/authorize-on-chain', authorize('ADMIN'), (req, res, next) => institutionController.authorizeOnChain(req, res, next));
+router.post('/:id/authorize-onchain', authorize('ADMIN'), (req, res, next) => {
+  req.body = req.body || {};
+  req.body.institutionId = req.params.id;
+  return institutionController.authorizeOnChain(req, res, next);
+});
 router.post('/deauthorize-on-chain', authorize('ADMIN'), (req, res, next) => institutionController.deauthorizeOnChain(req, res, next));
 
 export default router;

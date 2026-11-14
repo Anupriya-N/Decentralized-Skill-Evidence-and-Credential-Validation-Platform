@@ -9,6 +9,7 @@ import { validateEvidenceFile } from '../../utils/validationUtils';
 import { CATEGORIES } from '../../utils/formatUtils';
 import { UploadCloud, FileCheck, Hash, Boxes, Wallet, CheckCircle2 } from 'lucide-react';
 import { walletService } from '../../services/walletService';
+import { credentialService } from '../../services/credentialService';
 import toast from 'react-hot-toast';
 
 export const IssueCredentialPage = () => {
@@ -57,18 +58,39 @@ export const IssueCredentialPage = () => {
 
   const handleIssueSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedFile || !computedHash) {
-      toast.error('Please upload the certificate file to compute SHA-256.');
+    if (!selectedFile) {
+      toast.error('Please upload the certificate evidence file.');
       return;
     }
     setSubmitting(true);
     try {
+      // Step 1: Two-Step Preparation Flow - prepare canonical credential payload and hash via backend
+      toast.loading('Preparing canonical credential payload...', { id: 'prep-cred' });
+      let preparedData;
+      try {
+        preparedData = await credentialService.prepareIssuance({
+          studentId: recipientStudentId,
+          title,
+          courseCode: skillName,
+          type: category,
+          issuedAt: issueDate,
+        });
+        toast.success('Canonical payload prepared and hash computed!', { id: 'prep-cred' });
+      } catch (prepErr) {
+        toast.dismiss('prep-cred');
+        toast.error('Preparation failed: ' + (prepErr.message || 'Error communicating with backend'));
+        setSubmitting(false);
+        return;
+      }
+
+      // Step 2: Sign exact backend canonical hash via MetaMask if selected
+      let signedAuth = null;
       let metaMaskSignature = null;
       if (signWithMetaMask && walletAccount) {
         toast.loading('Please sign EIP-712 IssueAuthorization in MetaMask...', { id: 'mm-sign' });
         try {
-          const signed = await walletService.signIssueAuthorization(computedHash);
-          metaMaskSignature = signed.signature;
+          signedAuth = await walletService.signIssueAuthorization(preparedData);
+          metaMaskSignature = signedAuth.signature;
           toast.success('MetaMask EIP-712 signature approved!', { id: 'mm-sign' });
         } catch (signErr) {
           toast.dismiss('mm-sign');
@@ -78,6 +100,7 @@ export const IssueCredentialPage = () => {
         }
       }
 
+      // Step 3: Submit complete issuance request to backend
       const newCred = await addCredential({
         ownerUserId: recipientStudentId,
         studentId: recipientStudentId,
@@ -86,11 +109,16 @@ export const IssueCredentialPage = () => {
         category,
         issuerId: myIssuer.id,
         issuer: myIssuer.organizationName,
-        issueDate,
+        issueDate: preparedData.issuedAt || issueDate,
         visibility: 'public',
+        certificateNumber: preparedData.certificateNumber,
+        issuedAt: preparedData.issuedAt,
+        normalizedPayload: preparedData.normalizedPayload,
+        credentialHash: preparedData.credentialHash,
+        eip712Auth: signedAuth,
         eip712Signature: metaMaskSignature,
         metaMaskSignature
-      }, selectedFile, computedHash);
+      }, selectedFile, preparedData.credentialHash || computedHash);
 
       toast.success(`Successfully issued "${newCred.title}"!`);
       navigate('/issuer/credentials');

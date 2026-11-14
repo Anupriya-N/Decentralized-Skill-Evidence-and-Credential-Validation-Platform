@@ -15,8 +15,159 @@ import { ethers } from 'ethers';
 
 export class CredentialController {
   /**
+   * Two-Step Preparation Flow (Task 1):
+   * Validates recipient, accreditation, evidence artifact,
+   * generates canonical certificate number and timestamp,
+   * normalizes credential payload and computes canonical credentialHash,
+   * retrieves current on-chain nonce and 1-hour deadline,
+   * returns parameters ready for EIP-712 IssueAuthorization signing.
+   */
+  async prepareIssuance(req, res, next) {
+    try {
+      const issuerId = req.user.id;
+      const {
+        studentId,
+        studentEmail,
+        recipientId,
+        evidenceId,
+        title,
+        description,
+        type = 'CERTIFICATE',
+        credentialType,
+        badgeLevel = 'BRONZE',
+        grade,
+        courseCode,
+        skills = [],
+        expiresAt,
+      } = req.body;
+
+      if (!title) {
+        throw new BadRequestError('Credential title is required');
+      }
+
+      // 1. Authorization: Only accredited institutions or admins may prepare
+      const isAccredited = req.user.role === 'ADMIN' || Boolean(req.user.rawUser?.institutionProfile?.isAccredited);
+      if (!isAccredited) {
+        throw new ForbiddenError('Only accredited institutions are authorized to issue credentials');
+      }
+
+      // 2. Validate recipient student
+      const targetStudentId = studentId || recipientId;
+      let student = await prisma.user.findFirst({
+        where: {
+          OR: [
+            ...(targetStudentId ? [{ id: targetStudentId }] : []),
+            ...(studentEmail ? [{ email: studentEmail.toLowerCase() }] : []),
+          ],
+        },
+      });
+
+      if (!student) {
+        throw new NotFoundError('Target student record not found for credential assignment');
+      }
+
+      if (student.role !== 'STUDENT') {
+        throw new BadRequestError('Credentials can only be assigned to accounts with the STUDENT role');
+      }
+
+      // 3. Prevent self-issuance
+      if (student.id === issuerId) {
+        throw new ForbiddenError('Issuing institutions cannot issue student credentials to themselves');
+      }
+
+      // 4. Validate evidence artifact if referenced
+      let referencedEvidence = null;
+      if (evidenceId) {
+        referencedEvidence = await prisma.evidence.findUnique({
+          where: { id: evidenceId },
+        });
+
+        if (!referencedEvidence) {
+          throw new NotFoundError('Referenced evidence artifact not found');
+        }
+
+        if (referencedEvidence.studentId !== student.id) {
+          throw new BadRequestError('Referenced evidence artifact does not belong to the target student');
+        }
+
+        if (referencedEvidence.status !== 'APPROVED') {
+          throw new BadRequestError('Evidence must be officially approved by an authorized institution before issuing credentials');
+        }
+      }
+
+      // 5. Retrieve institution wallet address
+      const institutionUser = await prisma.user.findUnique({
+        where: { id: issuerId },
+        include: { institutionProfile: true },
+      });
+      const issuerWallet = institutionUser?.walletAddress || institutionUser?.institutionProfile?.signingPublicKey || req.user.rawUser?.walletAddress;
+
+      // 6. Query live on-chain nonce and compute 1-hour deadline
+      let nonce = 0;
+      if (issuerWallet && ethers.isAddress(issuerWallet) && blockchainService.isConfigured && blockchainService.contract) {
+        try {
+          nonce = await blockchainService.getNonce(issuerWallet);
+        } catch (nonceErr) {
+          console.warn('prepareIssuance: failed to fetch on-chain nonce:', nonceErr.message);
+        }
+      }
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // 7. Generate canonical certificate number and timestamp
+      const effectiveType = type || credentialType || 'CERTIFICATE';
+      const certNumber = generateCertificateNumber('CRT', courseCode || 'SKILL');
+      const issuedAtDate = new Date();
+
+      // 8. Construct deterministic normalized payload & canonical hash
+      const normalizedPayload = normalizeCredentialPayload({
+        certificateNumber: certNumber,
+        studentId: student.id,
+        issuerId,
+        title,
+        type: effectiveType,
+        badgeLevel,
+        grade,
+        courseCode,
+        issuedAt: issuedAtDate,
+      });
+
+      const credentialHash = computeSha256(normalizedPayload);
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+
+      // 9. EIP-712 domain and types definition
+      const domain = blockchainService.getEip712Domain();
+      const types = {
+        IssueAuthorization: [
+          { name: 'credentialHash', type: 'bytes32' },
+          { name: 'issuer', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      };
+
+      res.status(200).json({
+        success: true,
+        data: {
+          certificateNumber: certNumber,
+          issuedAt: issuedAtDate.toISOString(),
+          normalizedPayload,
+          credentialHash: formattedHash,
+          issuer: issuerWallet || null,
+          nonce: Number(nonce),
+          deadline,
+          domain,
+          types,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Issue a new credential.
-   * Priority 1: Uses decrypted institutional signing key (never BLOCKCHAIN_PRIVATE_KEY).
+   * Priority 1: Uses decrypted institutional signing key (never BLOCKCHAIN_PRIVATE_KEY)
+   * or verified EIP-712 IssueAuthorization from connected institutional MetaMask wallet.
    * Validates target is STUDENT.
    */
   async issue(req, res, next) {
@@ -25,6 +176,7 @@ export class CredentialController {
       const {
         studentId,
         studentEmail,
+        recipientId,
         evidenceId,
         title,
         description,
@@ -34,6 +186,8 @@ export class CredentialController {
         courseCode,
         skills = [],
         expiresAt,
+        certificateNumber: submittedCertNumber,
+        issuedAt: submittedIssuedAt,
       } = req.body;
 
       if (!title) {
@@ -47,11 +201,12 @@ export class CredentialController {
       }
 
       // 2. Enforce: Only STUDENT accounts may receive student credentials
+      const targetStudentId = studentId || recipientId;
       let student = await prisma.user.findFirst({
         where: {
           OR: [
-            { id: studentId },
-            { email: studentEmail?.toLowerCase() },
+            ...(targetStudentId ? [{ id: targetStudentId }] : []),
+            ...(studentEmail ? [{ email: studentEmail.toLowerCase() }] : []),
           ],
         },
       });
@@ -89,6 +244,14 @@ export class CredentialController {
         throw new ForbiddenError('Issuing institutions cannot issue student credentials to themselves');
       }
 
+      // Check if client provided MetaMask EIP-712 authorization object or signature
+      const authObj = req.body.eip712Auth || {};
+      const clientSig = authObj.signature || (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.signature : req.body.eip712Signature) || req.body.metaMaskSignature;
+      const clientHash = authObj.credentialHash || req.body.credentialHash;
+      const clientNonce = authObj.nonce !== undefined ? authObj.nonce : (req.body.eip712Nonce !== undefined ? req.body.eip712Nonce : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined));
+      const clientDeadline = authObj.deadline !== undefined ? authObj.deadline : (req.body.eip712Deadline !== undefined ? req.body.eip712Deadline : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined));
+      const clientIssuer = authObj.issuer || req.body.issuer;
+
       // 4. Retrieve institutional private signing key (Priority 1: Dedicated institutional key, never BLOCKCHAIN_PRIVATE_KEY)
       let institutionalKey = null;
       const encryptedKey = req.user.rawUser?.institutionProfile?.encryptedSigningKey;
@@ -100,19 +263,24 @@ export class CredentialController {
         institutionalKey = process.env.INSTITUTION_SIGNING_KEY;
       }
 
-      if (!institutionalKey || institutionalKey.length < 64) {
+      if (!clientSig && (!institutionalKey || institutionalKey.length < 64)) {
         throw new BadRequestError(
-          'Institutional private signing key is not configured or could not be decrypted. Institution must provision a secure signing key before issuing credentials.'
+          'Institutional private signing key is not configured or could not be decrypted. Institution must provision a secure signing key or sign via MetaMask before issuing credentials.'
         );
       }
 
-      // Verify signing key matches registered institution public identity
-      const cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
-      const signingWallet = new ethers.Wallet(cleanKey);
+      let cleanKey = null;
+      let signingWallet = null;
+      if (institutionalKey && institutionalKey.length >= 64) {
+        cleanKey = institutionalKey.startsWith('0x') ? institutionalKey : `0x${institutionalKey}`;
+        signingWallet = new ethers.Wallet(cleanKey);
+      }
+
       const registeredIssuerAddress =
         req.user.rawUser?.walletAddress || req.user.rawUser?.institutionProfile?.signingPublicKey;
 
       if (
+        signingWallet &&
         registeredIssuerAddress &&
         ethers.isAddress(registeredIssuerAddress) &&
         signingWallet.address.toLowerCase() !== registeredIssuerAddress.toLowerCase()
@@ -122,7 +290,7 @@ export class CredentialController {
         );
       }
 
-      if (!registeredIssuerAddress) {
+      if (!registeredIssuerAddress && signingWallet) {
         await prisma.user.update({
           where: { id: req.user.id },
           data: {
@@ -138,8 +306,9 @@ export class CredentialController {
         });
       }
 
-      const certNumber = generateCertificateNumber('CRT', courseCode || 'SKILL');
-      const issuedAtDate = new Date();
+      // Canonical certificate number and timestamp
+      const certNumber = submittedCertNumber || generateCertificateNumber('CRT', courseCode || 'SKILL');
+      const issuedAtDate = submittedIssuedAt ? new Date(submittedIssuedAt) : new Date();
 
       // 5. Deterministic payload normalization
       const normalizedPayload = normalizeCredentialPayload({
@@ -154,11 +323,23 @@ export class CredentialController {
         issuedAt: issuedAtDate,
       });
 
-      // 6. Independent hash computation
+      // 6. Independent canonical hash computation
       const credentialHash = computeSha256(normalizedPayload);
+      const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
 
-      // 7. Genuine Ethereum ECDSA digital signature using institutional key
-      const { signature } = await signCredentialPayload(normalizedPayload, cleanKey);
+      // Verify that submitted authorization hash matches the canonical computed hash
+      if (clientHash && clientHash.toLowerCase() !== formattedHash.toLowerCase()) {
+        throw new BadRequestError(
+          `Credential hash mismatch: authorization hash (${clientHash}) does not match canonical payload hash (${formattedHash})`
+        );
+      }
+
+      // 7. Digital signature (institutional key or client EIP-712 signature)
+      let digitalSignature = clientSig;
+      if (!digitalSignature && cleanKey) {
+        const { signature } = await signCredentialPayload(normalizedPayload, cleanKey);
+        digitalSignature = signature;
+      }
       const merkleRoot = computeMerkleRoot([credentialHash]);
 
       // 8. Genuine Blockchain Anchor Submission via verified institutional EIP-712 authorization (Task 1)
@@ -182,29 +363,16 @@ export class CredentialController {
           ],
         };
 
-        const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
-
-        // Check if client provided MetaMask EIP-712 signature (Task 1)
-        const clientSig = typeof req.body.eip712Signature === 'object'
-          ? req.body.eip712Signature.signature
-          : (req.body.eip712Signature || req.body.metaMaskSignature);
-        const clientNonce = req.body.eip712Nonce !== undefined
-          ? req.body.eip712Nonce
-          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined);
-        const clientDeadline = req.body.eip712Deadline !== undefined
-          ? req.body.eip712Deadline
-          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined);
-
         if (clientSig) {
-          const issuerWalletAddress = registeredIssuerAddress || signingWallet.address;
+          const issuerWalletAddress = clientIssuer || registeredIssuerAddress || signingWallet?.address;
           if (!issuerWalletAddress) {
             throw new BadRequestError('Institution wallet is not linked or registered. Please link your MetaMask wallet.');
           }
 
           // Verify institution is authorized on-chain
           const isAuthOnChain = await blockchainService.isIssuerAuthorized(issuerWalletAddress);
-          if (!isAuthOnChain) {
-            throw new ForbiddenError(`Institution wallet (${issuerWalletAddress}) is not authorized on-chain to issue credentials.`);
+          if (!isAuthOnChain && req.user.role !== 'ADMIN') {
+            throw new ForbiddenError(`Institution wallet (${issuerWalletAddress}) is not authorized on-chain to issue credentials. Contact admin for authorization.`);
           }
 
           const onChainNonce = await blockchainService.getNonce(issuerWalletAddress);
@@ -247,7 +415,7 @@ export class CredentialController {
             issueDeadline,
             clientSig
           );
-        } else {
+        } else if (signingWallet) {
           // Automated testing / fallback flow using decrypted institutional key
           const isAuthOnChain = await blockchainService.isIssuerAuthorized(signingWallet.address);
           if (!isAuthOnChain && req.user.role !== 'ADMIN') {
@@ -301,7 +469,7 @@ export class CredentialController {
           issuedAt: issuedAtDate,
           credentialHash,
           merkleRoot,
-          digitalSignature: signature,
+          digitalSignature: digitalSignature || 'UNSIGNED',
           expiresAt: expiresAt ? new Date(expiresAt) : null,
           qrCodeUrl: `${env.FRONTEND_URL}/verify/${certNumber}`,
           onChainRevocationStatus: 'NOT_REVOKED',
@@ -444,15 +612,21 @@ export class CredentialController {
       const originalIssuerWallet = issuerUser?.walletAddress || issuerUser?.institutionProfile?.signingPublicKey;
 
       // Extract client-provided EIP-712 revocation signature if provided
-      const clientSig = typeof req.body.eip712Signature === 'object'
+      const authObj = req.body.eip712Auth || {};
+      const clientSig = authObj.signature || (typeof req.body.eip712Signature === 'object'
         ? req.body.eip712Signature.signature
-        : (req.body.eip712Signature || req.body.metaMaskSignature);
-      const clientNonce = req.body.eip712Nonce !== undefined
-        ? req.body.eip712Nonce
-        : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined);
-      const clientDeadline = req.body.eip712Deadline !== undefined
-        ? req.body.eip712Deadline
-        : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined);
+        : (req.body.eip712Signature || req.body.metaMaskSignature));
+      const clientNonce = authObj.nonce !== undefined
+        ? authObj.nonce
+        : (req.body.eip712Nonce !== undefined
+          ? req.body.eip712Nonce
+          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.nonce : undefined));
+      const clientDeadline = authObj.deadline !== undefined
+        ? authObj.deadline
+        : (req.body.eip712Deadline !== undefined
+          ? req.body.eip712Deadline
+          : (typeof req.body.eip712Signature === 'object' ? req.body.eip712Signature.deadline : undefined));
+      const clientHash = authObj.credentialHash || req.body.credentialHash;
 
       let onChainRevocationStatus = 'REVOKE_PENDING';
       let onChainRevocationTx = null;
@@ -462,6 +636,10 @@ export class CredentialController {
           const formattedHash = credential.credentialHash.startsWith('0x')
             ? credential.credentialHash
             : `0x${credential.credentialHash}`;
+
+          if (clientHash && clientHash.toLowerCase() !== formattedHash.toLowerCase()) {
+            throw new BadRequestError('Credential hash in revocation authorization does not match target credential');
+          }
 
           // Flow 1: Client provided verified MetaMask EIP-712 RevokeAuthorization (Task 3 standard flow)
           if (clientSig && originalIssuerWallet) {
@@ -698,6 +876,10 @@ export class CredentialController {
           const formattedHash = credential.credentialHash.startsWith('0x')
             ? credential.credentialHash
             : `0x${credential.credentialHash}`;
+
+          if (clientHash && clientHash.toLowerCase() !== formattedHash.toLowerCase()) {
+            throw new BadRequestError('Credential hash in revocation authorization does not match target credential');
+          }
 
           const value = {
             credentialHash: formattedHash,

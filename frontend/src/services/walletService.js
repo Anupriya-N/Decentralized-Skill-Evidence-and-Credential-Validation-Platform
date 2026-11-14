@@ -197,23 +197,44 @@ class WalletService {
   /**
    * Sign EIP-712 IssueAuthorization using MetaMask
    */
-  async signIssueAuthorization(credentialHash, deadlineSeconds = 3600) {
+  async signIssueAuthorization(preparedOrHash, deadlineSeconds = 3600) {
     const address = this.account || (await this.connect()).address;
 
-    const paramsRes = await apiClient.get('/institutions/eip712-params');
-    if (!paramsRes?.data) {
-      throw new Error('Failed to retrieve EIP-712 parameters from backend.');
+    let targetHash;
+    let targetNonce;
+    let targetDeadline;
+    let targetIssuer = address;
+    let domain;
+    let types;
+
+    if (typeof preparedOrHash === 'object' && preparedOrHash !== null) {
+      targetHash = preparedOrHash.credentialHash;
+      targetNonce = preparedOrHash.nonce;
+      targetDeadline = preparedOrHash.deadline;
+      targetIssuer = preparedOrHash.issuer || address;
+      domain = preparedOrHash.domain;
+      types = preparedOrHash.types;
     }
 
-    const { domain, types, currentNonce } = paramsRes.data;
-    const deadline = Math.floor(Date.now() / 1000) + deadlineSeconds;
-    const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+    if (!domain || !types || targetNonce === undefined) {
+      const paramsRes = await apiClient.get('/institutions/eip712-params');
+      if (!paramsRes?.data) {
+        throw new Error('Failed to retrieve EIP-712 parameters from backend.');
+      }
+      domain = domain || paramsRes.data.domain;
+      types = types || paramsRes.data.types;
+      targetNonce = targetNonce !== undefined ? targetNonce : paramsRes.data.currentNonce;
+      targetDeadline = targetDeadline || (Math.floor(Date.now() / 1000) + deadlineSeconds);
+      targetHash = targetHash || (typeof preparedOrHash === 'string' ? preparedOrHash : '');
+    }
+
+    const formattedHash = targetHash.startsWith('0x') ? targetHash : `0x${targetHash}`;
 
     const value = {
       credentialHash: formattedHash,
-      issuer: address,
-      nonce: currentNonce,
-      deadline,
+      issuer: targetIssuer,
+      nonce: targetNonce,
+      deadline: targetDeadline,
     };
 
     const typedData = {
@@ -251,9 +272,9 @@ class WalletService {
 
     return {
       signature,
-      issuer: address,
-      nonce: currentNonce,
-      deadline,
+      issuer: targetIssuer,
+      nonce: targetNonce,
+      deadline: targetDeadline,
       credentialHash: formattedHash,
     };
   }
@@ -261,23 +282,44 @@ class WalletService {
   /**
    * Sign EIP-712 RevokeAuthorization using MetaMask
    */
-  async signRevokeAuthorization(credentialHash, deadlineSeconds = 3600) {
+  async signRevokeAuthorization(preparedOrHash, deadlineSeconds = 3600) {
     const address = this.account || (await this.connect()).address;
 
-    const paramsRes = await apiClient.get('/institutions/eip712-params');
-    if (!paramsRes?.data) {
-      throw new Error('Failed to retrieve EIP-712 parameters from backend.');
+    let targetHash;
+    let targetNonce;
+    let targetDeadline;
+    let targetIssuer = address;
+    let domain;
+    let types;
+
+    if (typeof preparedOrHash === 'object' && preparedOrHash !== null) {
+      targetHash = preparedOrHash.credentialHash;
+      targetNonce = preparedOrHash.nonce;
+      targetDeadline = preparedOrHash.deadline;
+      targetIssuer = preparedOrHash.issuer || address;
+      domain = preparedOrHash.domain;
+      types = preparedOrHash.types;
     }
 
-    const { domain, types, currentNonce } = paramsRes.data;
-    const deadline = Math.floor(Date.now() / 1000) + deadlineSeconds;
-    const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+    if (!domain || !types || targetNonce === undefined) {
+      const paramsRes = await apiClient.get('/institutions/eip712-params');
+      if (!paramsRes?.data) {
+        throw new Error('Failed to retrieve EIP-712 parameters from backend.');
+      }
+      domain = domain || paramsRes.data.domain;
+      types = types || paramsRes.data.types;
+      targetNonce = targetNonce !== undefined ? targetNonce : paramsRes.data.currentNonce;
+      targetDeadline = targetDeadline || (Math.floor(Date.now() / 1000) + deadlineSeconds);
+      targetHash = targetHash || (typeof preparedOrHash === 'string' ? preparedOrHash : '');
+    }
+
+    const formattedHash = targetHash.startsWith('0x') ? targetHash : `0x${targetHash}`;
 
     const value = {
       credentialHash: formattedHash,
-      issuer: address,
-      nonce: currentNonce,
-      deadline,
+      issuer: targetIssuer,
+      nonce: targetNonce,
+      deadline: targetDeadline,
     };
 
     const typedData = {
@@ -315,9 +357,9 @@ class WalletService {
 
     return {
       signature,
-      issuer: address,
-      nonce: currentNonce,
-      deadline,
+      issuer: targetIssuer,
+      nonce: targetNonce,
+      deadline: targetDeadline,
       credentialHash: formattedHash,
     };
   }

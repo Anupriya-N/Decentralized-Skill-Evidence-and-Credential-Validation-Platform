@@ -10,22 +10,26 @@ import { apiClient } from './apiClient.js';
 
 export const blockchainService = {
   isDemoMode() {
-    return import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true' || 
-           import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN !== 'true';
+    return import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
   },
 
   isProductionMode() {
     return import.meta.env?.MODE === 'production' && 
-           import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN === 'true';
+           import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN !== 'true';
   },
 
   /**
    * Indicates whether live blockchain mode is enabled.
-   * Can communicate via backend RPC relayer or direct window.ethereum provider.
+   * Connects via backend relayer and smart contract by default unless mock is explicitly enabled.
    */
   isConnected() {
-    const isLive = import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN === 'true';
-    return Boolean(isLive);
+    if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+      return false;
+    }
+    if (import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN !== undefined) {
+      return import.meta.env.VITE_ENABLE_LIVE_BLOCKCHAIN === 'true';
+    }
+    return true;
   },
 
   getNetworkConfig() {

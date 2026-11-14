@@ -123,6 +123,7 @@ export class JobsService {
                       gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed) : null,
                     },
                   });
+                  console.log(`[Reconciliation] Anchor ${anchor.id} confirmed on-chain. TxHash: ${anchor.transactionHash || receipt?.hash}, Block: ${receipt?.blockNumber}, ConfirmedAt: ${new Date().toISOString()}`);
                   reconciledCount++;
                 } else {
                   console.warn(`JobsService: Anchor ${anchor.id} receipt confirmed, but on-chain readback verification failed:`, onChain.status);

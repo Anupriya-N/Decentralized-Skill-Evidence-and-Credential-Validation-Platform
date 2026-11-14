@@ -158,7 +158,12 @@ export const verificationService = {
         };
       }
     } catch (apiErr) {
-      if (apiErr.status === 404) {
+      const localCreds = storageService.getCredentials();
+      const localMatch = localCreds.find(c => 
+        c.credentialId?.toLowerCase() === cleanId.toLowerCase() || 
+        c.id?.toLowerCase() === cleanId.toLowerCase()
+      );
+      if (!localMatch && apiErr.status === 404) {
         return {
           recordFound: false,
           credential: null,
@@ -385,10 +390,10 @@ export const verificationService = {
       overallResult = VERIFICATION_STATES.ISSUER_NOT_TRUSTED;
     } else if (issuerCheck.status === 'PENDING' || credential.claimStatus === 'pending') {
       overallResult = VERIFICATION_STATES.PENDING_VERIFICATION;
-    } else if (blockchainCheck.status === 'UNAVAILABLE') {
-      overallResult = VERIFICATION_STATES.BLOCKCHAIN_UNAVAILABLE;
     } else if (fileHashCheck.status === 'NOT_CHECKED') {
       overallResult = VERIFICATION_STATES.VERIFICATION_INCOMPLETE;
+    } else if (blockchainCheck.status === 'UNAVAILABLE') {
+      overallResult = VERIFICATION_STATES.BLOCKCHAIN_UNAVAILABLE;
     } else if (blockchainCheck.status === 'NOT_CONNECTED') {
       // Blockchain is not connected to a live network
       overallResult = VERIFICATION_STATES.VERIFICATION_INCOMPLETE;
