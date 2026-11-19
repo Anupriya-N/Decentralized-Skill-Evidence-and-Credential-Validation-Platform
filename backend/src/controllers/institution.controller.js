@@ -722,6 +722,47 @@ export class InstitutionController {
       next(error);
     }
   }
+
+  /**
+   * Get enrolled / registered students for credential issuance
+   */
+  async getStudents(req, res, next) {
+    try {
+      const { search } = req.query;
+      const where = { role: 'STUDENT' };
+      if (search) {
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ];
+      }
+      const students = await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          walletAddress: true,
+          studentProfile: {
+            select: {
+              studentNumber: true,
+              degreeProgram: true,
+              graduationYear: true,
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      });
+
+      res.status(200).json({
+        success: true,
+        data: students,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const institutionController = new InstitutionController();

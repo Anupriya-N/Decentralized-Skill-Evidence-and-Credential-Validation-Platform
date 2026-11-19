@@ -115,7 +115,8 @@ export class CredentialController {
 
       // 7. Generate canonical certificate number and timestamp
       const effectiveType = type || credentialType || 'CERTIFICATE';
-      const certNumber = generateCertificateNumber('CRT', courseCode || 'SKILL');
+      const effectiveCourseCode = courseCode || req.body.skillName || (skills && skills[0]) || 'SKILL';
+      const certNumber = generateCertificateNumber('CRT', effectiveCourseCode);
       const issuedAtDate = new Date();
 
       // 8. Construct deterministic normalized payload & canonical hash
@@ -127,7 +128,7 @@ export class CredentialController {
         type: effectiveType,
         badgeLevel,
         grade,
-        courseCode,
+        courseCode: effectiveCourseCode,
         issuedAt: issuedAtDate,
       });
 
@@ -307,7 +308,8 @@ export class CredentialController {
       }
 
       // Canonical certificate number and timestamp
-      const certNumber = submittedCertNumber || generateCertificateNumber('CRT', courseCode || 'SKILL');
+      const effectiveCourseCode = courseCode || req.body.skillName || (skills && skills[0]) || 'SKILL';
+      const certNumber = submittedCertNumber || generateCertificateNumber('CRT', effectiveCourseCode);
       const issuedAtDate = submittedIssuedAt ? new Date(submittedIssuedAt) : new Date();
 
       // 5. Deterministic payload normalization
@@ -319,13 +321,21 @@ export class CredentialController {
         type,
         badgeLevel,
         grade,
-        courseCode,
+        courseCode: effectiveCourseCode,
         issuedAt: issuedAtDate,
       });
 
       // 6. Independent canonical hash computation
       const credentialHash = computeSha256(normalizedPayload);
       const formattedHash = credentialHash.startsWith('0x') ? credentialHash : `0x${credentialHash}`;
+
+      // Prevent duplicate issuance with identical canonical hash
+      const existingCredential = await prisma.credential.findFirst({
+        where: { credentialHash: formattedHash },
+      });
+      if (existingCredential) {
+        throw new BadRequestError(`A credential with this exact canonical hash (${formattedHash}) has already been issued on the platform`);
+      }
 
       // Verify that submitted authorization hash matches the canonical computed hash
       if (clientHash && clientHash.toLowerCase() !== formattedHash.toLowerCase()) {
@@ -595,7 +605,7 @@ export class CredentialController {
         throw new NotFoundError('Credential not found');
       }
 
-      if (credential.status === 'REVOKED') {
+      if (credential.status === 'REVOKED' || credential.onChainRevocationStatus === 'REVOKE_CONFIRMED') {
         throw new BadRequestError('Credential is already revoked in the system');
       }
 
@@ -1083,7 +1093,6 @@ export class CredentialController {
 
       const updateData = {};
       if (description !== undefined) updateData.description = description;
-      if (title !== undefined && (isIssuer || isAdmin)) updateData.title = title;
       if (visibility !== undefined) {
         const currentMeta = typeof credential.metadata === 'object' && credential.metadata !== null
           ? credential.metadata

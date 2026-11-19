@@ -10,6 +10,7 @@ import { formatDate } from '../../utils/formatUtils';
 import { Award, AlertTriangle, ExternalLink, ShieldAlert, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { walletService } from '../../services/walletService';
+import { credentialService } from '../../services/credentialService';
 
 export const IssuedCredentialsPage = () => {
   const { user } = useAuth();
@@ -30,9 +31,32 @@ export const IssuedCredentialsPage = () => {
     try {
       let signedRevokeAuth = null;
       const account = walletService.getConnectedAccount();
-      const targetHash = revokingCred.fileHash || revokingCred.credentialHash || revokingCred.blockchainProof?.registeredDigest;
+      const isMock = import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
 
-      if (account && targetHash) {
+      if (!isMock && !account) {
+        toast.error('MetaMask wallet must be connected to authorize revocation on-chain.');
+        setRevokingLoading(false);
+        return;
+      }
+
+      // Authoritative credential hash from smart contract / backend (never fileHash)
+      let targetHash = revokingCred.credentialHash || revokingCred.blockchainAnchor?.credentialHash;
+      if (!targetHash) {
+        try {
+          const fullCred = await credentialService.getCredentialById(revokingCred.id);
+          targetHash = fullCred?.credentialHash;
+        } catch (err) {
+          console.warn('Could not fetch authoritative credential hash:', err.message);
+        }
+      }
+
+      if (account) {
+        if (!targetHash) {
+          toast.error('Authoritative credential hash not found. Cannot construct EIP-712 revocation.');
+          setRevokingLoading(false);
+          return;
+        }
+
         toast.loading('Please sign EIP-712 RevokeAuthorization in MetaMask...', { id: 'mm-revoke' });
         try {
           signedRevokeAuth = await walletService.signRevokeAuthorization(targetHash);

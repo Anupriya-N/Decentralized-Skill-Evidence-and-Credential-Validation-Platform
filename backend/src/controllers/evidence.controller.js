@@ -19,9 +19,49 @@ export class EvidenceController {
         throw new BadRequestError('Evidence file is required');
       }
 
-      const studentId = req.user.id;
       const { title, description, evidenceType = 'PROJECT', skillIds } = req.body;
       const filePath = req.file.path;
+
+      // Determine evidence ownership and approval status based on authenticated role
+      let studentId = req.user.id;
+      let initialStatus = 'PENDING_REVIEW';
+      let reviewedBy = null;
+      let reviewedAt = null;
+
+      if (req.user.role === 'INSTITUTION' || req.user.role === 'ADMIN') {
+        const targetStudentId = req.body.studentId || req.body.targetStudentId || req.body.studentEmail;
+        if (!targetStudentId) {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          throw new BadRequestError('Target student ID (studentId) is required when certificate evidence is uploaded by an institution');
+        }
+        const studentUser = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { id: targetStudentId },
+              { email: targetStudentId.toLowerCase() },
+            ],
+          },
+        });
+        if (!studentUser) {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          throw new NotFoundError('Specified target student record not found for evidence registration');
+        }
+        if (studentUser.role !== 'STUDENT') {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          throw new BadRequestError('Evidence can only be registered for accounts with the STUDENT role');
+        }
+        studentId = studentUser.id;
+        // Institution-uploaded certificate documents are verified by the issuing institution
+        initialStatus = 'APPROVED';
+        reviewedBy = req.user.id;
+        reviewedAt = new Date();
+      } else if (req.user.role === 'STUDENT') {
+        studentId = req.user.id;
+        initialStatus = 'PENDING_REVIEW';
+      } else {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw new ForbiddenError('Unauthorized account role for evidence upload');
+      }
 
       // 1. Strict Magic Bytes Validation (Priority 6.1 & 6.2)
       const magicCheck = validateFileMagicBytes(filePath);
@@ -103,14 +143,14 @@ export class EvidenceController {
         }
       }
 
-      // 5. Store record in PostgreSQL (Status strictly remains PENDING_REVIEW for institutional approval)
+      // 5. Store record in PostgreSQL (Status set to APPROVED for authorized institution upload; PENDING_REVIEW for student submissions)
       const evidence = await prisma.evidence.create({
         data: {
           studentId,
           title: title || req.file.originalname,
           description,
           evidenceType,
-          status: 'PENDING_REVIEW', // Strict: AI output NEVER auto-approves
+          status: initialStatus,
           aiStatus,
           fileUrl,
           fileName: path.basename(req.file.filename),
@@ -125,20 +165,30 @@ export class EvidenceController {
               relevanceScore: 1.0,
             })),
           },
+          ...(reviewedBy ? {
+            reviews: {
+              create: {
+                reviewerId: reviewedBy,
+                decision: 'APPROVED',
+                feedback: 'Verified and approved upon institutional certificate upload.',
+              },
+            },
+          } : {}),
         },
         include: {
           skills: { include: { skill: true } },
+          reviews: true,
         },
       });
 
       // Audit Log
       await prisma.auditLog.create({
         data: {
-          userId: studentId,
-          action: 'EVIDENCE_SUBMITTED',
+          userId: req.user.id,
+          action: initialStatus === 'APPROVED' ? 'INSTITUTION_EVIDENCE_UPLOADED' : 'EVIDENCE_SUBMITTED',
           entity: 'EVIDENCE',
           entityId: evidence.id,
-          details: { title: evidence.title, hash: sha256Hash, aiStatus },
+          details: { title: evidence.title, hash: sha256Hash, studentId, initialStatus, aiStatus },
         },
       });
 

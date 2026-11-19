@@ -1,5 +1,6 @@
 import { prisma } from '../config/database.js';
 import { blockchainService } from './blockchain.service.js';
+import { ethers } from 'ethers';
 
 export class JobsService {
   constructor() {
@@ -146,10 +147,15 @@ export class JobsService {
               }
             }
           } 
-          // Case B: Anchor lacks transaction hash -> read on-chain state first, then attempt safe recovery
+          // Case B: Anchor lacks transaction hash -> read on-chain state first
           else if (!anchor.transactionHash && anchor.credential) {
             const cred = anchor.credential;
             const expectedIssuer = cred.issuer?.walletAddress || cred.issuer?.institutionProfile?.signingPublicKey;
+
+            if (!expectedIssuer || !ethers.isAddress(expectedIssuer)) {
+              console.warn(`JobsService: Anchor ${anchor.id} cannot be reconciled without a valid registered issuer address`);
+              continue;
+            }
 
             const onChainPromise = blockchainService.verifyOnChain(cred.credentialHash, expectedIssuer);
             const timeoutPromise = new Promise((_, reject) =>
@@ -157,32 +163,22 @@ export class JobsService {
             );
 
             const onChain = await Promise.race([onChainPromise, timeoutPromise]);
-            // Task 5: Strictly verify existence, exact hash, expected issuer address, and not revoked
-            if (onChain.checked && onChain.exists && !onChain.revoked && (onChain.isIssuerMatch || !expectedIssuer)) {
+            // Strictly verify on-chain existence, exact hash, expected issuer match, and not revoked
+            if (onChain.checked && onChain.exists && !onChain.revoked && onChain.isIssuerMatch) {
               await prisma.blockchainAnchor.update({
                 where: { id: anchor.id },
                 data: {
                   isConfirmed: true,
                   status: 'CONFIRMED',
+                  blockNumber: onChain.blockNumber ? BigInt(onChain.blockNumber) : null,
                 },
               });
+              console.log(`[Reconciliation] Anchor ${anchor.id} confirmed on-chain. TxHash: ${anchor.transactionHash || 'on-chain'}, Block: ${onChain.blockNumber}, ConfirmedAt: ${new Date().toISOString()}`);
               reconciledCount++;
-            } else if (blockchainService.isConfigured) {
-              // Attempt bounded resubmission via relayer
-              const resubmit = await blockchainService.anchorCredential(cred.credentialHash, expectedIssuer);
-              const isResubmitConfirmed = Boolean(resubmit.isConfirmed || resubmit.success);
-              if (isResubmitConfirmed) {
-                await prisma.blockchainAnchor.update({
-                  where: { id: anchor.id },
-                  data: {
-                    transactionHash: resubmit.transactionHash,
-                    blockNumber: resubmit.blockNumber ? BigInt(resubmit.blockNumber) : null,
-                    isConfirmed: true,
-                    status: 'CONFIRMED',
-                  },
-                });
-                reconciledCount++;
-              }
+            } else {
+              // Never automatically resubmit through unsigned direct anchorCredential
+              // Keep status as PENDING_BLOCKCHAIN until confirmed on-chain via signed transaction
+              console.warn(`JobsService: Anchor ${anchor.id} on-chain verification pending or unconfirmed.`);
             }
           }
         } catch (txErr) {

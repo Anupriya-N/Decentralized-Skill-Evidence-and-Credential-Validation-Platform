@@ -1,6 +1,13 @@
 import { storageService } from './storageService.js';
 import { apiClient } from './apiClient.js';
 
+function isMockMode() {
+  if (typeof process !== 'undefined' && process.env?.VITE_ENABLE_MOCK_BLOCKCHAIN !== undefined) {
+    return process.env.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+  }
+  return import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+}
+
 /**
  * Institutional Accreditation Status Constants
  */
@@ -87,7 +94,7 @@ export const issuerService = {
    * Real-world rule: An admin click produces 'demo_approved' ("Demo Approval – External Institution Verification Pending"),
    * distinguishing demo approval from genuine external institutional verification.
    */
-  updateTrustStatus(issuerId, status, reviewReason, actingUser = null) {
+  async updateTrustStatus(issuerId, status, reviewReason, actingUser = null) {
     const role = actingUser?.role || (typeof actingUser === 'string' ? 'admin' : null);
     if (role !== 'admin') {
       throw new Error('Unauthorized: Only platform administrators can modify institutional accreditation status.');
@@ -109,13 +116,18 @@ export const issuerService = {
     const isAccredited = normalizedStatus === ISSUER_ACCREDITATION_STATUS.DEMO_APPROVED ||
       normalizedStatus === ISSUER_ACCREDITATION_STATUS.EXTERNALLY_VERIFIED;
 
-    // Call real backend administrator accreditation API asynchronously
-    apiClient.patch(`/admin/institutions/${encodeURIComponent(issuerId)}/accreditation`, {
-      isAccredited,
-      accreditationBody: reviewReason || 'Institutional accreditation verified'
-    }).catch((apiErr) => {
+    // Call real backend administrator accreditation API
+    try {
+      await apiClient.patch(`/admin/institutions/${encodeURIComponent(issuerId)}/accreditation`, {
+        isAccredited,
+        accreditationBody: reviewReason || 'Institutional accreditation verified'
+      });
+    } catch (apiErr) {
+      if (!isMockMode()) {
+        throw new Error(apiErr.data?.message || apiErr.message || 'Failed to update institutional accreditation in backend');
+      }
       console.warn('Backend accreditation API notice:', apiErr.message);
-    });
+    }
 
     const newHistoryEntry = {
       action: `STATUS_CHANGE_TO_${normalizedStatus.toUpperCase()}`,
@@ -172,7 +184,7 @@ export const issuerService = {
    * Approves a student's validation claim.
    * Authorization check: Only user with role 'issuer' or 'admin' can approve.
    */
-  approveValidationRequest(requestId, actingUser = null) {
+  async approveValidationRequest(requestId, actingUser = null) {
     const role = actingUser?.role || (typeof actingUser === 'string' ? 'issuer' : null);
     if (role !== 'issuer' && role !== 'admin') {
       throw new Error('Unauthorized: Only authorized institutional issuers or administrators can approve student credential claims.');
@@ -187,13 +199,18 @@ export const issuerService = {
     const reviewerUserId = actingUser?.id || 'user-issuer-01';
     const reviewerName = actingUser?.fullName || targetReq.issuerName || 'Issuing Authority';
 
-    // Call real backend evidence review API asynchronously
-    apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
-      status: 'APPROVED',
-      comments: 'Certificate evidence verified against registrar and approved.'
-    }).catch((apiErr) => {
+    // Call real backend evidence review API
+    try {
+      await apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
+        status: 'APPROVED',
+        comments: 'Certificate evidence verified against registrar and approved.'
+      });
+    } catch (apiErr) {
+      if (!isMockMode()) {
+        throw new Error(apiErr.data?.message || apiErr.message || 'Failed to review evidence in backend');
+      }
       console.warn('Backend evidence review API notice:', apiErr.message);
-    });
+    }
 
     const historyEntry = {
       action: 'CLAIM_APPROVED',
@@ -269,7 +286,7 @@ export const issuerService = {
    * Rejects a student's validation claim with required reason.
    * Authorization check: Only user with role 'issuer' or 'admin' can reject.
    */
-  rejectValidationRequest(requestId, reason, actingUser = null) {
+  async rejectValidationRequest(requestId, reason, actingUser = null) {
     const role = actingUser?.role || (typeof actingUser === 'string' ? 'issuer' : null);
     if (role !== 'issuer' && role !== 'admin') {
       throw new Error('Unauthorized: Only authorized institutional issuers or administrators can reject student credential claims.');
@@ -279,13 +296,18 @@ export const issuerService = {
       throw new Error('A rejection reason must be provided.');
     }
 
-    // Call real backend evidence review API asynchronously
-    apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
-      status: 'REJECTED',
-      comments: reason.trim()
-    }).catch((apiErr) => {
+    // Call real backend evidence review API
+    try {
+      await apiClient.patch(`/evidence/${encodeURIComponent(requestId)}/review`, {
+        status: 'REJECTED',
+        comments: reason.trim()
+      });
+    } catch (apiErr) {
+      if (!isMockMode()) {
+        throw new Error(apiErr.data?.message || apiErr.message || 'Failed to reject evidence in backend');
+      }
       console.warn('Backend evidence review API notice:', apiErr.message);
-    });
+    }
 
     const requests = storageService.getValidationRequests();
     const reqIndex = requests.findIndex(r => r.id === requestId);

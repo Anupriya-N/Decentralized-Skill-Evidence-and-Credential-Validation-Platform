@@ -1,6 +1,9 @@
 import { mockBlockchainAdapter } from '../adapters/blockchain/mockBlockchainAdapter.js';
 import { apiClient } from './apiClient.js';
 
+let cachedStatus = null;
+let lastFetchTime = 0;
+
 /**
  * Centralized Blockchain Service
  * Manages smart contract interaction, proof lookups, and ledger connection status.
@@ -10,12 +13,36 @@ import { apiClient } from './apiClient.js';
 
 export const blockchainService = {
   isDemoMode() {
+    if (typeof process !== 'undefined' && process.env?.VITE_ENABLE_MOCK_BLOCKCHAIN !== undefined) {
+      return process.env.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+    }
     return import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
   },
 
   isProductionMode() {
-    return import.meta.env?.MODE === 'production' && 
-           import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN !== 'true';
+    if (this.isDemoMode()) return false;
+    return (typeof process !== 'undefined' && process.env?.NODE_ENV === 'production') ||
+           import.meta.env?.MODE === 'production';
+  },
+
+  /**
+   * Fetches real-time status and contract details from backend /api/v1/blockchain/status
+   */
+  async fetchBlockchainStatus(force = false) {
+    if (!force && cachedStatus && (Date.now() - lastFetchTime < 30000)) {
+      return cachedStatus;
+    }
+    try {
+      const res = await apiClient.get('/blockchain/status');
+      if (res && res.data) {
+        cachedStatus = res.data;
+        lastFetchTime = Date.now();
+        return cachedStatus;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch live blockchain status:', err.message);
+    }
+    return cachedStatus;
   },
 
   /**
@@ -26,6 +53,9 @@ export const blockchainService = {
     if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
       return false;
     }
+    if (cachedStatus) {
+      return Boolean(cachedStatus.isConnected);
+    }
     if (import.meta.env?.VITE_ENABLE_LIVE_BLOCKCHAIN !== undefined) {
       return import.meta.env.VITE_ENABLE_LIVE_BLOCKCHAIN === 'true';
     }
@@ -34,11 +64,12 @@ export const blockchainService = {
 
   getNetworkConfig() {
     const connected = this.isConnected();
+    const liveContract = cachedStatus?.contractAddress || import.meta.env?.VITE_CONTRACT_ADDRESS || null;
     return {
       connected,
       mode: this.isDemoMode() ? 'DEMO_MODE' : 'PRODUCTION_MODE',
-      networkName: connected ? 'Ethereum Sepolia Testnet' : 'Not Connected (Live Network Inactive)',
-      contractAddress: connected ? (import.meta.env?.VITE_CONTRACT_ADDRESS || '0x742d35Cc6634C0532925a3b844Bc454e4438f44e') : null,
+      networkName: cachedStatus?.networkName || (connected ? 'Ethereum Sepolia Testnet' : 'Not Connected (Live Network Inactive)'),
+      contractAddress: connected ? liveContract : null,
       explorerBaseUrl: 'https://sepolia.etherscan.io'
     };
   },

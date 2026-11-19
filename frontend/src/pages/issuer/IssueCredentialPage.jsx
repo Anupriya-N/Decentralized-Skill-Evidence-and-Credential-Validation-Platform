@@ -10,6 +10,7 @@ import { CATEGORIES } from '../../utils/formatUtils';
 import { UploadCloud, FileCheck, Hash, Boxes, Wallet, CheckCircle2 } from 'lucide-react';
 import { walletService } from '../../services/walletService';
 import { credentialService } from '../../services/credentialService';
+import { apiClient } from '../../services/apiClient';
 import toast from 'react-hot-toast';
 
 export const IssueCredentialPage = () => {
@@ -18,9 +19,12 @@ export const IssueCredentialPage = () => {
   const navigate = useNavigate();
 
   const myIssuer = issuers.find(i => i.id === user?.issuerId || i.email === user?.email) || issuers[0];
-  const students = users.filter(u => u.role === 'student');
+  const fallbackStudents = users.filter(u => u.role === 'student');
 
-  const [recipientStudentId, setRecipientStudentId] = useState(students[0]?.id || '');
+  const [realStudents, setRealStudents] = useState([]);
+  const activeStudents = realStudents.length > 0 ? realStudents : fallbackStudents;
+
+  const [recipientStudentId, setRecipientStudentId] = useState('');
   const [title, setTitle] = useState('');
   const [skillName, setSkillName] = useState('');
   const [category, setCategory] = useState(CATEGORIES[0]);
@@ -30,6 +34,37 @@ export const IssueCredentialPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [walletAccount, setWalletAccount] = useState(walletService.getConnectedAccount());
   const [signWithMetaMask, setSignWithMetaMask] = useState(Boolean(walletService.getConnectedAccount()));
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadStudents() {
+      try {
+        const res = await apiClient.get('/institutions/students');
+        if (isMounted && res?.data?.students && Array.isArray(res.data.students)) {
+          const list = res.data.students.map(s => ({
+            id: s.id,
+            fullName: s.name,
+            email: s.email,
+            role: 'student'
+          }));
+          setRealStudents(list);
+          if (list.length > 0) {
+            setRecipientStudentId(prev => prev || list[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch institutional students list:', err.message);
+      }
+    }
+    loadStudents();
+    return () => { isMounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!recipientStudentId && activeStudents.length > 0) {
+      setRecipientStudentId(activeStudents[0].id);
+    }
+  }, [activeStudents, recipientStudentId]);
 
   useEffect(() => {
     const unsub = walletService.subscribe(st => {
@@ -62,8 +97,46 @@ export const IssueCredentialPage = () => {
       toast.error('Please upload the certificate evidence file.');
       return;
     }
+    if (!recipientStudentId) {
+      toast.error('Please select an enrolled recipient student.');
+      return;
+    }
+
+    const isMock = import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+    if (!isMock && !walletAccount) {
+      toast.error('MetaMask wallet must be connected to sign the institutional authorization.');
+      return;
+    }
+
     setSubmitting(true);
     try {
+      // Step 0: Upload evidence file first to obtain verified backend evidence ID
+      toast.loading('Uploading certificate evidence...', { id: 'upload-evidence' });
+      let uploadedEvidenceId = null;
+      try {
+        const formData = new FormData();
+        formData.append('document', selectedFile);
+        formData.append('title', title || selectedFile.name);
+        formData.append('evidenceType', 'CERTIFICATE_PDF');
+        formData.append('description', `Certificate evidence for ${title}`);
+        formData.append('studentId', recipientStudentId);
+        if (skillName) {
+          formData.append('skills', JSON.stringify([skillName]));
+        }
+        const uploadRes = await apiClient.post('/evidence/upload', formData);
+        if (uploadRes?.data?.id) {
+          uploadedEvidenceId = uploadRes.data.id;
+        } else {
+          throw new Error('Evidence upload did not return an evidence ID');
+        }
+        toast.success('Evidence uploaded and approved!', { id: 'upload-evidence' });
+      } catch (uploadErr) {
+        toast.dismiss('upload-evidence');
+        toast.error('Evidence upload failed: ' + (uploadErr.data?.message || uploadErr.message));
+        setSubmitting(false);
+        return;
+      }
+
       // Step 1: Two-Step Preparation Flow - prepare canonical credential payload and hash via backend
       toast.loading('Preparing canonical credential payload...', { id: 'prep-cred' });
       let preparedData;
@@ -74,6 +147,7 @@ export const IssueCredentialPage = () => {
           courseCode: skillName,
           type: category,
           issuedAt: issueDate,
+          evidenceId: uploadedEvidenceId,
         });
         toast.success('Canonical payload prepared and hash computed!', { id: 'prep-cred' });
       } catch (prepErr) {
@@ -83,10 +157,10 @@ export const IssueCredentialPage = () => {
         return;
       }
 
-      // Step 2: Sign exact backend canonical hash via MetaMask if selected
+      // Step 2: Sign exact backend canonical hash via MetaMask
       let signedAuth = null;
       let metaMaskSignature = null;
-      if (signWithMetaMask && walletAccount) {
+      if (walletAccount) {
         toast.loading('Please sign EIP-712 IssueAuthorization in MetaMask...', { id: 'mm-sign' });
         try {
           signedAuth = await walletService.signIssueAuthorization(preparedData);
@@ -106,6 +180,7 @@ export const IssueCredentialPage = () => {
         studentId: recipientStudentId,
         title,
         skillName,
+        courseCode: skillName,
         category,
         issuerId: myIssuer.id,
         issuer: myIssuer.organizationName,
@@ -113,6 +188,7 @@ export const IssueCredentialPage = () => {
         visibility: 'public',
         certificateNumber: preparedData.certificateNumber,
         issuedAt: preparedData.issuedAt,
+        evidenceId: uploadedEvidenceId,
         normalizedPayload: preparedData.normalizedPayload,
         credentialHash: preparedData.credentialHash,
         eip712Auth: signedAuth,
@@ -149,7 +225,7 @@ export const IssueCredentialPage = () => {
               onChange={(e) => setRecipientStudentId(e.target.value)}
               className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white"
             >
-              {students.map(s => (
+              {activeStudents.map(s => (
                 <option key={s.id} value={s.id}>{s.fullName} ({s.email})</option>
               ))}
             </select>
@@ -233,22 +309,17 @@ export const IssueCredentialPage = () => {
                   {walletAccount ? (
                     <span className="text-emerald-700 font-medium">MetaMask Connected: {walletAccount.slice(0, 6)}...{walletAccount.slice(-4)}</span>
                   ) : (
-                    'MetaMask not connected. Will use server-side authorized institutional key.'
+                    <span className="text-rose-600 font-medium">MetaMask not connected. Wallet required for production issuance.</span>
                   )}
                 </p>
               </div>
             </div>
 
             {walletAccount && (
-              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={signWithMetaMask}
-                  onChange={(e) => setSignWithMetaMask(e.target.checked)}
-                  className="rounded text-brand-600 focus:ring-brand-500"
-                />
-                Sign with MetaMask (EIP-712)
-              </label>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Ready to Sign (EIP-712)
+              </span>
             )}
           </div>
 

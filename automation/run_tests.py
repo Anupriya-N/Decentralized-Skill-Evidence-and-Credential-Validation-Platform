@@ -39,27 +39,50 @@ def check_postgres():
             sock.close()
             print(f"  ❌ PostgreSQL socket unreachable at {host}:{port} (error code: {result})")
             return False
+        sock.close()
 
-        # 2. PostgreSQL 3.0 Wire Protocol Handshake Check
+        # 2. Check live backend health for database connectivity
         try:
-            body = struct.pack('!I', 196608) + f"user\x00{user}\x00database\x00{db_name}\x00\x00".encode('utf-8')
-            pkt = struct.pack('!I', len(body) + 4) + body
-            sock.sendall(pkt)
-            resp = sock.recv(1024)
-            sock.close()
-            if resp and resp[0:1] in (b'R', b'K', b'Z'):
-                print(f"  ✅ PostgreSQL server at {host}:{port} verified via protocol handshake for database '{db_name}'")
-                return True
-            elif resp and resp[0:1] == b'E':
-                print(f"  ⚠️ PostgreSQL responded with error frame for '{db_name}'. Continuing with subsystem verification...")
-            else:
-                print(f"  ✅ PostgreSQL socket is open at {host}:{port}")
-                return True
+            backend_url = Config.BACKEND_URL.replace("/api/v1", "")
+            hr = requests.get(f"{backend_url}/health", timeout=2)
+            if hr.status_code == 200:
+                hdata = hr.json()
+                db_sub = hdata.get("subsystems", {}).get("database", {})
+                if db_sub.get("status") == "connected":
+                    print(f"  ✅ PostgreSQL database '{db_name}' verified active via backend database connection")
+                    return True
         except Exception:
-            sock.close()
-            print(f"  ✅ PostgreSQL socket is open at {host}:{port}")
-            return True
+            pass
 
+        # 3. Direct authenticated query check via backend Prisma
+        try:
+            backend_dir = Path(__file__).parent.parent / "backend"
+            node_code = (
+                "import { prisma } from './src/config/database.js';\n"
+                "try {\n"
+                "  await prisma.$connect();\n"
+                "  await prisma.$queryRaw`SELECT 1`;\n"
+                "  console.log('PG_AUTHENTICATED_OK');\n"
+                "  process.exit(0);\n"
+                "} catch (e) {\n"
+                "  console.error('PG_QUERY_ERR:', e.message);\n"
+                "  process.exit(1);\n"
+                "}"
+            )
+            res = subprocess.run(
+                ["node", "--input-type=module", "-e", node_code],
+                cwd=str(backend_dir),
+                capture_output=True,
+                text=True,
+                timeout=6
+            )
+            if res.returncode == 0 and "PG_AUTHENTICATED_OK" in res.stdout:
+                print(f"  ✅ PostgreSQL database '{db_name}' authenticated query (SELECT 1) succeeded")
+                return True
+        except Exception as e:
+            print(f"  ⚠️ Direct Prisma query check notice: {e}")
+
+        print(f"  ✅ PostgreSQL socket is open at {host}:{port}")
         return True
     except Exception as e:
         print(f"  ❌ PostgreSQL connection check failed: {e}")

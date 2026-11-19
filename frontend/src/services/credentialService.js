@@ -1,6 +1,13 @@
 import { storageService } from './storageService.js';
 import { apiClient } from './apiClient.js';
 
+function isMockMode() {
+  if (typeof process !== 'undefined' && process.env?.VITE_ENABLE_MOCK_BLOCKCHAIN !== undefined) {
+    return process.env.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+  }
+  return import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true';
+}
+
 function mapBackendCredential(c) {
   if (!c) return null;
   const isRevoked = c.status === 'REVOKED' || c.onChainRevocationStatus === 'REVOKE_CONFIRMED';
@@ -20,13 +27,14 @@ function mapBackendCredential(c) {
     expiryDate: c.expiresAt ? new Date(c.expiresAt).toISOString().split('T')[0] : null,
     fileName: c.metadata?.evidenceTitle || c.fileName || 'credential_evidence.pdf',
     fileHash: c.credentialHash || c.fileHash,
+    credentialHash: c.credentialHash || null,
     integrityStatus: 'verified',
     issuerStatus: c.issuer?.institutionProfile?.isAccredited ? 'externally_verified' : 'demo_approved',
     credentialStatus: isRevoked ? 'revoked' : (c.status?.toLowerCase() || 'active'),
     revocationReason: c.revocationReason || null,
     revokedAt: c.revokedAt || null,
     revokedBy: c.revokedBy || null,
-    onChainRevocationStatus: c.onChainRevocationStatus || (isRevoked ? 'REVOKE_CONFIRMED' : 'NOT_REVOKED'),
+    onChainRevocationStatus: c.onChainRevocationStatus || (c.status === 'REVOKED' ? 'REVOKE_PENDING' : 'NOT_REVOKED'),
     onChainRevocationTx: c.onChainRevocationTx || null,
     visibility: c.visibility || 'public',
     blockchainAnchor: c.blockchainAnchor,
@@ -61,12 +69,12 @@ export const credentialService = {
         return res.data.credentials.map(mapBackendCredential);
       }
     } catch (err) {
-      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+      if (isMockMode()) {
         return storageService.getCredentials();
       }
       throw err;
     }
-    if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+    if (isMockMode()) {
       return storageService.getCredentials();
     }
     return [];
@@ -79,7 +87,7 @@ export const credentialService = {
         return mapBackendCredential(res.data);
       }
     } catch (err) {
-      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+      if (isMockMode()) {
         const creds = storageService.getCredentials();
         return creds.find(c => c.id === idOrCredentialId || c.credentialId === idOrCredentialId) || null;
       }
@@ -95,7 +103,7 @@ export const credentialService = {
         return res.data.credentials.map(mapBackendCredential);
       }
     } catch (err) {
-      if (import.meta.env?.VITE_ENABLE_MOCK_BLOCKCHAIN === 'true') {
+      if (isMockMode()) {
         const creds = storageService.getCredentials();
         return creds.filter(c => c.ownerUserId === userId);
       }
@@ -149,15 +157,24 @@ export const credentialService = {
         formData.append('title', credentialData.title || fileObject.name);
         formData.append('evidenceType', 'CERTIFICATE_PDF');
         formData.append('description', credentialData.description || '');
+        const targetStudentId = credentialData.studentId || credentialData.recipientId || credentialData.ownerUserId;
+        if (targetStudentId) {
+          formData.append('studentId', targetStudentId);
+        }
         if (credentialData.skillName) {
           formData.append('skills', JSON.stringify([credentialData.skillName]));
         }
         const uploadRes = await apiClient.post('/evidence/upload', formData);
         if (uploadRes?.data) {
           backendEvidence = uploadRes.data;
+        } else {
+          throw new Error('Evidence upload failed: No data returned from server');
         }
       } catch (uploadErr) {
-        console.warn('Real evidence upload to backend failed or unauthenticated:', uploadErr.message);
+        console.error('Real evidence upload to backend failed:', uploadErr.message);
+        if (!isMockMode()) {
+          throw new Error(uploadErr.data?.message || uploadErr.message || 'Evidence upload failed');
+        }
       }
     }
 
@@ -170,6 +187,7 @@ export const credentialService = {
           recipientId: credentialData.recipientId || credentialData.studentId,
           evidenceId: backendEvidence?.id || credentialData.evidenceId,
           title: credentialData.title,
+          courseCode: credentialData.courseCode || credentialData.skillName || 'SKILL',
           description: credentialData.description || '',
           type: credentialData.category || credentialData.type || 'CERTIFICATE',
           skills: credentialData.skillName ? [credentialData.skillName] : [],
@@ -198,6 +216,10 @@ export const credentialService = {
         console.error('Backend credential issuance failed:', issueErr.message);
         throw new Error(issueErr.data?.message || issueErr.message || 'Failed to issue credential via backend API');
       }
+    }
+
+    if (!isMockMode()) {
+      throw new Error('A valid registered student must be selected to issue credentials.');
     }
 
     const matchedIssuer = issuers.find(i => 
@@ -280,43 +302,42 @@ export const credentialService = {
     return newCredential;
   },
 
-  updateCredentialMetadata(id, updateData) {
+  async updateCredentialMetadata(id, updateData) {
     const creds = storageService.getCredentials();
     const index = creds.findIndex(c => c.id === id || c.credentialId === id);
-    if (index === -1) throw new Error('Credential not found.');
+    const target = index !== -1 ? creds[index] : null;
 
-    const target = creds[index];
+    let res = null;
+    try {
+      res = await apiClient.patch(`/credentials/${encodeURIComponent(target?.id || id)}`, {
+        description: updateData.description,
+        visibility: updateData.visibility
+      });
+    } catch (err) {
+      if (!isMockMode()) {
+        throw err;
+      }
+      console.warn('Real backend PATCH /credentials metadata update notice:', err.message);
+    }
+
     const updated = {
-      ...target,
-      title: updateData.title || target.title,
-      skillName: updateData.skillName || target.skillName,
-      category: updateData.category || target.category,
-      description: updateData.description !== undefined ? updateData.description : target.description,
-      visibility: updateData.visibility || target.visibility,
+      ...(target || { id, credentialId: id }),
+      skillName: updateData.skillName || target?.skillName,
+      category: updateData.category || target?.category,
+      description: updateData.description !== undefined ? updateData.description : target?.description,
+      visibility: updateData.visibility || target?.visibility,
       updatedAt: new Date().toISOString()
     };
 
-    creds[index] = updated;
-    storageService.setCredentials(creds);
+    if (res?.data) {
+      const mapped = mapBackendCredential(res.data);
+      Object.assign(updated, mapped);
+    }
 
-    // Call real backend PATCH /credentials/:id to persist metadata
-    apiClient.patch(`/credentials/${encodeURIComponent(target.id || id)}`, {
-      title: updateData.title,
-      description: updateData.description,
-      visibility: updateData.visibility
-    }).then(res => {
-      if (res?.data) {
-        const mapped = mapBackendCredential(res.data);
-        const currentCreds = storageService.getCredentials();
-        const cIdx = currentCreds.findIndex(c => c.id === id || c.credentialId === id);
-        if (cIdx !== -1) {
-          currentCreds[cIdx] = { ...currentCreds[cIdx], ...mapped };
-          storageService.setCredentials(currentCreds);
-        }
-      }
-    }).catch(err => {
-      console.warn('Real backend PATCH /credentials metadata update notice:', err.message);
-    });
+    if (index !== -1) {
+      creds[index] = updated;
+      storageService.setCredentials(creds);
+    }
 
     return updated;
   },

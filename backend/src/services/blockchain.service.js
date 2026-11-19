@@ -100,6 +100,7 @@ export class BlockchainService {
         networkName: network.name,
         latestBlock: blockNumber,
         contractConfigured: Boolean(env.CONTRACT_ADDRESS && ethers.isAddress(env.CONTRACT_ADDRESS)),
+        contractAddress: env.CONTRACT_ADDRESS || null,
       };
     } catch (error) {
       return {

@@ -8,6 +8,7 @@ router.use(authenticate);
 router.use(authorize('INSTITUTION', 'ADMIN'));
 
 router.get('/dashboard', (req, res, next) => institutionController.getDashboard(req, res, next));
+router.get('/students', (req, res, next) => institutionController.getStudents(req, res, next));
 router.get('/credentials', (req, res, next) => institutionController.getIssuedCredentials(req, res, next));
 router.post('/credentials/batch', (req, res, next) => institutionController.batchIssue(req, res, next));
 router.post('/batch-issue', (req, res, next) => institutionController.batchIssue(req, res, next));

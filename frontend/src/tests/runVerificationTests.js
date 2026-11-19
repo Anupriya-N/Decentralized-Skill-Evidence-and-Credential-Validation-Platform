@@ -15,6 +15,8 @@ if (typeof globalThis.localStorage === 'undefined') {
 }
 
 // 2. Vite environment polyfill for Node
+process.env.VITE_ENABLE_MOCK_BLOCKCHAIN = 'true';
+process.env.VITE_ENABLE_LIVE_BLOCKCHAIN = 'false';
 if (typeof import.meta.env === 'undefined') {
   import.meta.env = {
     MODE: 'test',
@@ -231,7 +233,7 @@ async function runTestSuite() {
 
   // Test 12: Admin rejection with reason
   try {
-    const rejected = issuerService.updateTrustStatus(
+    const rejected = await issuerService.updateTrustStatus(
       testIssuerId,
       ISSUER_ACCREDITATION_STATUS.REJECTED,
       'Charter documentation expired and uncertified.',
@@ -249,7 +251,7 @@ async function runTestSuite() {
 
   // Test 13: Admin demo approval ("Demo Approval – External Institution Verification Pending")
   try {
-    const approved = issuerService.updateTrustStatus(
+    const approved = await issuerService.updateTrustStatus(
       testIssuerId,
       ISSUER_ACCREDITATION_STATUS.DEMO_APPROVED,
       'Institutional charter verified for prototype testing.',
@@ -294,7 +296,7 @@ async function runTestSuite() {
   try {
     let unauthorizedBlocked = false;
     try {
-      issuerService.approveValidationRequest('req-001', studentUser); // Student attempting to approve claim
+      await issuerService.approveValidationRequest('req-001', studentUser); // Student attempting to approve claim
     } catch (unauthErr) {
       if (unauthErr.message.includes('Unauthorized')) {
         unauthorizedBlocked = true;
@@ -312,7 +314,7 @@ async function runTestSuite() {
   // Test 16: Resubmission after rejection
   try {
     // 1. Reject first
-    const rejectedResult = issuerService.rejectValidationRequest(
+    const rejectedResult = await issuerService.rejectValidationRequest(
       'req-001',
       'Enrollment identity documentation unreadable.',
       issuerOfficer

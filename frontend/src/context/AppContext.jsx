@@ -16,7 +16,7 @@ export const AppProvider = ({ children }) => {
   const [validationRequests, setValidationRequests] = useState(() => storageService.getValidationRequests());
   const [users, setUsers] = useState(() => storageService.getUsers());
 
-  const refreshData = useCallback(() => {
+  const refreshData = useCallback(async () => {
     setCredentials([...storageService.getCredentials()]);
     setIssuers([...storageService.getIssuers()]);
     setSkills([...storageService.getSkills()]);
@@ -25,6 +25,18 @@ export const AppProvider = ({ children }) => {
     setVerificationLogs([...storageService.getVerificationLogs()]);
     setValidationRequests([...storageService.getValidationRequests()]);
     setUsers([...storageService.getUsers()]);
+
+    try {
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('certitrust_token') : null;
+      if (token) {
+        const credsRes = await credentialService.getAllCredentials().catch(() => null);
+        if (credsRes && Array.isArray(credsRes) && credsRes.length > 0) {
+          setCredentials(credsRes);
+        }
+      }
+    } catch (e) {
+      // ignore background sync errors
+    }
   }, []);
 
   const resetAllDemoData = () => {
